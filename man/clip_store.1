@@ -1,6 +1,6 @@
 .TH CLIP_STORE 1 "May 2026" "stream-data-pipeline v2.3" "User Commands"
 .SH NAME
-clip_store \- plain-text clip index with TTL and garbage collection
+clip_store \- plain-text structured record store with TTL and garbage collection
 .SH SYNOPSIS
 .B clip_store
 .B \-\-db
@@ -19,7 +19,7 @@ clip_store \- plain-text clip index with TTL and garbage collection
 .I path
 .B \-\-gc
 .SH DESCRIPTION
-\fBclip_store\fR is a file-backed key-value index for embedded data pipelines.
+\fBclip_store\fR is a file-backed structured record store for embedded data pipelines.
 In append mode it reads JSON Lines from stdin and appends each record to a
 plain-text database file.
 .PP
@@ -31,7 +31,7 @@ The database format is tab-delimited:
 .fi
 .RE
 .PP
-Where \fIkey\fR is \fIsession_id\fB:\fIts\fR, \fIvalue\fR is the clip JSON payload
+Where \fIkey\fR is \fIsession_id\fB:\fIts\fR, \fIvalue\fR is the full JSON payload
 compressed with zlib and encoded to Base64, and \fIexpire_at\fR is a Unix timestamp
 (0 = never expires). Decompression is handled transparently on read.
 .PP

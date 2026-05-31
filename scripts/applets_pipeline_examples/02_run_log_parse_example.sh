@@ -59,4 +59,21 @@ cat << 'EOF' | ./.build/log_parse --regex '^ *([0-9]+) [A-Z]+ +clip generated at
   1700000005 INFO  clip generated at /tmp/clips/b.mp4
 EOF
 echo ""
+
+FULL_LOG=$(mktemp)
+echo "[3] Example: Building a full structured log while filtering stdout"
+echo "Command:"
+echo "  ./.build/log_parse --regex ... --fields ts,level,session_id,type --build-full-log \"$FULL_LOG\" --filter type=clip"
+echo ""
+echo "Output:"
+cat << 'EOF' | ./.build/log_parse --regex '^([0-9]+) ([A-Z]+) session=([^ ]+) event=([^ ]+).*$' --fields ts,level,session_id,type --build-full-log "$FULL_LOG" --filter type=clip
+1747065600 INFO session=s1 event=data seq=1 offset=0 length=1000
+1747065601 WARN session=s1 event=gap expected_seq=2 actual_seq=4
+1747065602 INFO session=s1 event=clip path=/tmp/s1.bin offset=0 length=1000
+EOF
+echo ""
+echo "Full structured log:"
+cat "$FULL_LOG"
+rm -f "$FULL_LOG"
+echo ""
 echo "Done!"

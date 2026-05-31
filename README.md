@@ -25,10 +25,10 @@ box stream_merge | box log_parse --filter type=clip | box clip_store
 | --- | --- |
 | 使用 C 語言實作 3 個新的 applet | `stream_merge`、`log_parse`、`clip_store` |
 | 將工具編譯為單一執行檔 (BusyBox 架構) | 實作 `applets/main.c` 總進入點，編譯出單一 `.build/box` 二進位檔，並建立軟連結 |
-| 結構化日誌解析器與即時聚合統計 | `log_parse --regex ... --fields ... --format json\|csv`，支援 `--sum`, `--avg`, `--max`, `--min` 即時聚合 |
+| 結構化日誌解析器與即時聚合統計 | `log_parse --regex ... --fields ... --format json\|csv`，支援 `--build-full-log` 與 `--sum`, `--avg`, `--max`, `--min` 即時聚合 |
 | GNU / Toybox 相容性 | `log_parse` 支援 `-E` 參數對標 `grep -E` |
 | 串流資料過濾與轉換工具 | `stream_merge` 讀取 growing file，`log_parse --filter key=value` 過濾 records |
-| 輕量級資料儲存引擎與資料壓縮 | `clip_store` 寫入 file-backed key-value index，引入 `miniz` 支援 zlib 無損壓縮，並自動 Base64 編碼，支援 TTL、查詢與 GC |
+| 輕量級資料儲存引擎與資料壓縮 | `clip_store` 寫入 file-backed structured record DB，引入 `miniz` 支援 zlib 無損壓縮，並自動 Base64 編碼，支援 TTL、查詢與 GC |
 | 三個工具可透過 UNIX pipe 組成完整管線 | `pipeline_dispatcher` 建立 `stream_merge -> log_parse -> clip_store` |
 | 提取共用邏輯為內部函式庫 | `libpipeline`、`stream_logger`、`miniz`、`base64` |
 | 遵循 stdout/stderr 與 CLI 慣例 | applet stdout 保持資料流，diagnostic logs 走 stderr |
@@ -81,7 +81,7 @@ stdin -> stdout 的 structured record processor，支援三種用途：
 
 ### `clip_store`
 
-pipeline 終端的 file-backed index。從 stdin 讀取 clip JSON Lines，用 `session_id:ts` 作為 key，clip path 作為 value，並在寫入時使用 `miniz` 進行 Zlib 壓縮及 Base64 編碼，寫入純文字 DB，並提供查詢、TTL 與 GC 行為。
+pipeline 終端的 file-backed structured record DB。從 stdin 讀取 JSON Lines，用 `session_id:ts` 作為 key，完整 JSON record 作為 value，並在寫入時使用 `miniz` 進行 Zlib 壓縮及 Base64 編碼，寫入純文字 DB，並提供查詢、TTL 與 GC 行為。
 
 ## 系統程式設計重點
 
@@ -221,8 +221,8 @@ cat /tmp/udp_demo/clips.db
 
 - `pipeline_dispatcher` 可驗證 session artifact、解析 CLI options，並建立 `stream_merge -> log_parse -> clip_store` process pipeline。
 - `stream_merge` 可讀取 `.meta.jsonl` sidecar、驗證 session `.bin` 存在、做時間窗與 continuity 檢查，並輸出 clip byte-range metadata JSON Lines；CRC、events merge 與實體 mp4 clip extraction 留作 future work。
-- `log_parse` 可做 regex parsing、JSON/CSV output 與 JSONL filter。
-- `clip_store` 可寫入 file-backed index，並支援查詢、TTL、GC。
+- `log_parse` 可做 regex parsing、JSON/CSV output、JSONL filter 與 full structured log 建置。
+- `clip_store` 可寫入 file-backed structured record DB，並支援查詢、TTL、GC。
 - `libpipeline` 與 `stream_logger` 提供 applet 共用低階 helper。
 
 

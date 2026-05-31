@@ -28,8 +28,8 @@ box pipeline_dispatcher
 
 - `pipeline_dispatcher`：驗證 session artifact、解析 CLI options、fork、pipe、exec 軟連結 (`box`)、waitpid、signal cleanup。
 - `stream_merge`：讀 sidecar，做時間窗與 gap-aware continuity 檢查，輸出 clip metadata。
-- `log_parse`：解析 structured logs、過濾 JSONL records，並支援即時聚合統計 (`--sum`, `--avg`, `--min`, `--max`)。
-- `clip_store`：支援資料 Zlib 無損壓縮與 Base64 編解碼，寫入純文字 clip index，支援 TTL、查詢、GC/compact。
+- `log_parse`：解析 raw/structured logs、過濾 JSONL records，支援 full structured log 建置與即時聚合統計 (`--sum`, `--avg`, `--min`, `--max`)。
+- `clip_store`：支援資料 Zlib 無損壓縮與 Base64 編解碼，寫入純文字 structured record DB，支援 TTL、查詢、GC/compact。
 
 ## Non-Goals
 

@@ -4,6 +4,7 @@
 #include "log_regex.h"
 
 #include <ctype.h>
+#include <errno.h>
 #include <getopt.h>
 #include <regex.h>
 #include <stdio.h>
@@ -32,6 +33,7 @@ static void print_usage(FILE *stream, const char *prog_name) {
     fprintf(stream, "  -r, --regex <pattern>  Extract fields using POSIX extended regular expressions\n");
     fprintf(stream, "  -e, --fields <f1,f2>   Comma-separated field names for regex mode\n");
     fprintf(stream, "  -f, --filter <expr>    Filter expression: k=v, k!=v, k>v, or k~v\n");
+    fprintf(stream, "      --build-full-log <path> Append every parsed structured record to JSONL log\n");
     fprintf(stream, "      --format <fmt>     Set output format (json|csv|count) (default: json)\n");
     fprintf(stream, "      --sum <field>      Compute sum of field\n");
     fprintf(stream, "      --avg <field>      Compute average of field\n");
@@ -80,6 +82,8 @@ int log_parse_main(int argc, char *argv[]) {
     char *fields_arg = NULL;
     char *format_arg = NULL;
     char *filter_kv = NULL;
+    char *full_log_path = NULL;
+    FILE *full_log = NULL;
     filter_t filter = {0};
     log_output_format_t format = LOG_OUTPUT_JSON;
     agg_op_t agg_op = AGG_NONE;
@@ -107,6 +111,7 @@ int log_parse_main(int argc, char *argv[]) {
         {"avg",    required_argument, 0, 1002},
         {"min",    required_argument, 0, 1003},
         {"max",    required_argument, 0, 1004},
+        {"build-full-log", required_argument, 0, 1005},
         {"help",   no_argument,       0, 'h'},
         {0, 0, 0, 0}
     };
@@ -149,6 +154,9 @@ int log_parse_main(int argc, char *argv[]) {
                 agg_field = optarg;
                 has_agg = 1;
                 break;
+            case 1005:
+                full_log_path = optarg;
+                break;
             case 'E':
                 /* Compatibility with grep -E */
                 break;
@@ -166,6 +174,14 @@ int log_parse_main(int argc, char *argv[]) {
     if (parse_format(format_arg, &format) != 0) {
         LOG_ERROR("unsupported format=%s", format_arg);
         return 1;
+    }
+
+    if (full_log_path != NULL) {
+        full_log = fopen(full_log_path, "a");
+        if (full_log == NULL) {
+            LOG_ERROR("open full log failed: %s", strerror(errno));
+            return 1;
+        }
     }
 
     if (regex_pattern != NULL) {
@@ -227,6 +243,13 @@ int log_parse_main(int argc, char *argv[]) {
                 continue;
             }
 
+            if (full_log != NULL && log_output_write_json(full_log, &regex_state.log) != 0) {
+                LOG_ERROR("write full log failed");
+                log_regex_free_values(&regex_state.log);
+                exit_code = 2;
+                break;
+            }
+
             if (log_filter_match_fields(&regex_state.log, &filter)) {
                 double val = 0;
                 int val_found = 0;
@@ -267,10 +290,15 @@ int log_parse_main(int argc, char *argv[]) {
             log_regex_free_values(&regex_state.log);
         } else {
             int matched = 0;
-            
+
             if (log_filter_match_jsonl(line, &filter, &matched) != 0) {
                 LOG_WARN("malformed JSON line; skipping");
                 continue;
+            }
+            if (full_log != NULL && fprintf(full_log, "%s\n", line) < 0) {
+                LOG_ERROR("write full log failed");
+                exit_code = 2;
+                break;
             }
             if (matched) {
                 if (has_agg) {
@@ -324,6 +352,10 @@ int log_parse_main(int argc, char *argv[]) {
     }
     if (regex_mode) {
         log_regex_free(&regex_state.log);
+    }
+    if (full_log != NULL && fclose(full_log) != 0 && exit_code == 0) {
+        LOG_ERROR("close full log failed: %s", strerror(errno));
+        exit_code = 2;
     }
     fflush(stdout);
 

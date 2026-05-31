@@ -56,6 +56,18 @@ check_eq "regex != output" \
     "$(cat "$TMP_DIR/regex_ne.out")"
 check_eq "regex != stderr" "" "$(cat "$TMP_DIR/regex_ne.err")"
 
+printf '1747065601 heartbeat /tmp/heartbeat\n1747065602 clip /tmp/clips/a.mp4\n' |
+    "$LOG_PARSE" --regex '^([0-9]+) ([a-z_]+) (.+)$' --fields ts,type,path --build-full-log "$TMP_DIR/full.log" --filter type=clip \
+    >"$TMP_DIR/full_stdout.out" 2>"$TMP_DIR/full_stderr.err"
+check_eq "full log stdout filtered" \
+    '{"ts":"1747065602","type":"clip","path":"/tmp/clips/a.mp4"}' \
+    "$(cat "$TMP_DIR/full_stdout.out")"
+check_eq "full log captures all parsed records" \
+    '{"ts":"1747065601","type":"heartbeat","path":"/tmp/heartbeat"}
+{"ts":"1747065602","type":"clip","path":"/tmp/clips/a.mp4"}' \
+    "$(cat "$TMP_DIR/full.log")"
+check_eq "full log stderr" "" "$(cat "$TMP_DIR/full_stderr.err")"
+
 printf '1747065600 clip old\n1747065602 clip new\n' |
     "$LOG_PARSE" --regex '^([0-9]+) ([a-z_]+) (.+)$' --fields ts,type,msg --format csv --filter 'ts>1747065600' \
     >"$TMP_DIR/regex_gt.out" 2>"$TMP_DIR/regex_gt.err"

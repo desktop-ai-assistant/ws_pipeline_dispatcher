@@ -18,6 +18,8 @@ log_parse \- lightweight structured record processor for UNIX pipelines
 .RB [ \-\-min
 .IR field ]
 .RB [ \-E ]
+.RB [ \-\-build-full-log
+.IR path ]
 .br
 .B log_parse
 .RB [ \-f
@@ -45,6 +47,13 @@ Supports string, number, and boolean field comparisons.
 Reads parsed or filtered JSON records and calculates statistics (sum, avg, max, min)
 for a specified numeric \fIfield\fR in real-time, emitting the final result upon EOF.
 .RE
+.PP
+.B Full log mode
+.RS
+Appends every successfully parsed or validated structured record to a JSONL log
+before filtering stdout. This provides an audit/replay trail while the normal
+pipeline output can still be narrowed with \fB\-\-filter\fR.
+.RE
 .SH OPTIONS
 .TP
 .BI \-r ", " \-\-regex " pattern"
@@ -61,7 +70,10 @@ Required when \fB\-\-regex\fR is used.
 .BI \-f ", " \-\-filter " key=value"
 Read JSON Lines from stdin and emit only records where the flat field
 \fIkey\fR equals \fIvalue\fR.
-Cannot be combined with \fB\-\-regex\fR.
+.TP
+.BI \-\-build-full-log " path"
+Append every successfully parsed regex record or valid JSONL record to
+\fIpath\fR as JSON Lines before applying stdout filtering.
 .TP
 .BI \-\-format " fmt"
 Set output format for parse mode.
@@ -118,6 +130,18 @@ Keep only clip records from a stream of JSON Lines:
 .RS
 .nf
 cat events.jsonl | log_parse --filter type=clip
+.fi
+.RE
+.PP
+Build a full structured log while forwarding only clip records:
+.PP
+.RS
+.nf
+cat fsm.log | \
+  log_parse --regex '^([0-9]+) ([A-Z]+) session=([^ ]+) event=([^ ]+).*$' \
+            --fields ts,level,session_id,type \
+            --build-full-log full-events.jsonl \
+            --filter type=clip
 .fi
 .RE
 .PP

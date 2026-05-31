@@ -250,13 +250,15 @@ int clip_store_main(int argc, char *argv[]) {
         size_t cap = 0;
         while (getline(&line, &cap, stdin) > 0) {
             char session[128] = {0};
-            char path[PATH_MAX] = {0};
             int64_t ts = 0;
-            
+            size_t line_len = strlen(line);
+            while (line_len > 0 && (line[line_len - 1] == '\n' || line[line_len - 1] == '\r')) {
+                line[--line_len] = '\0';
+            }
+
             /* Extract required fields from JSON record */
             if (jsonl_get_string(line, "session_id", session, sizeof(session)) != 0 ||
-                jsonl_get_int64(line, "ts", &ts) != 0 ||
-                jsonl_get_string(line, "path", path, sizeof(path)) != 0) {
+                jsonl_get_int64(line, "ts", &ts) != 0) {
                 LOG_WARN("malformed clip JSON; skipping");
                 continue;
             }
@@ -271,7 +273,7 @@ int clip_store_main(int argc, char *argv[]) {
             if (dynamic_buffer_append_str(&key, session) != 0 ||
                 dynamic_buffer_append_char(&key, ':') != 0 ||
                 dynamic_buffer_append_str(&key, ts_buf) != 0 ||
-                append_db_row(fp, key.data, path, expire_at) != 0) {
+                append_db_row(fp, key.data, line, expire_at) != 0) {
                 LOG_ERROR("write db failed: %s", strerror(errno));
                 dynamic_buffer_free(&key);
                 rc = 1;

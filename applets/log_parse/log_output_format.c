@@ -11,7 +11,7 @@
     } \
 } while (0)
 
-int log_output_emit_json(const log_t *log) {
+int log_output_write_json(FILE *stream, const log_t *log) {
     dynamic_buffer_t buf = {0};
     TRY_DBUF(dynamic_buffer_append_char(&buf, '{'), buffer_fail);
     for (size_t i = 0; i < log->count; ++i) {
@@ -23,13 +23,20 @@ int log_output_emit_json(const log_t *log) {
         TRY_DBUF(jsonl_write_string(&buf, log->values[i]), buffer_fail);
     }
     TRY_DBUF(dynamic_buffer_append_str(&buf, "}\n"), buffer_fail);
-    fputs(buf.data, stdout);
+    if (fputs(buf.data, stream) == EOF) {
+        dynamic_buffer_free(&buf);
+        return -1;
+    }
     dynamic_buffer_free(&buf);
     return 0;
 
 buffer_fail:
     dynamic_buffer_free(&buf);
     return -1;
+}
+
+int log_output_emit_json(const log_t *log) {
+    return log_output_write_json(stdout, log);
 }
 
 static int append_csv_field(dynamic_buffer_t *buf, const char *s) {

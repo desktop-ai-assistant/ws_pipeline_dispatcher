@@ -1,6 +1,6 @@
 # log_parse
 
-`log_parse` 是 stdin -> stdout 的 structured record processor。它支援 regex 欄位提取、JSONL filter、即時聚合統計，以及輕量 count mode。
+`log_parse` 是 stdin -> stdout 的 structured log processor。它支援 regex 欄位提取、JSONL filter、即時聚合統計、輕量 count mode，以及 full structured log 建置。
 
 ## Parse Mode
 
@@ -13,6 +13,17 @@ log_parse --regex <pattern> --fields a,b,c --format json|csv [-E]
 - 將 capture groups 依序映射到 `--fields` 欄位名。
 - 對 stdout 輸出 JSON Lines 或 CSV。
 - regex capture value 一律視為字串。
+- 可搭配 `--build-full-log <path>`，將所有成功解析的 structured JSONL records 追加到完整 log，再依 filter 決定 stdout 是否輸出。
+
+## Full Log Mode
+
+```text
+log_parse --build-full-log <path>
+```
+
+- 在 regex mode 中，成功解析的每一行都會以 JSONL 追加到 `<path>`。
+- 在 JSONL filter mode 中，合法 JSON object 會原樣追加到 `<path>`。
+- full log 寫入發生在 filter 之前，因此可作為 audit trail、replay input 或後續統計來源。
 
 ## Aggregation (統計) Mode
 
@@ -36,7 +47,7 @@ log_parse --filter <expr>
 
 - 從 stdin 讀取 JSON Lines。
 - 只保留 top-level scalar 欄位符合條件的 records。
-- pipeline 中預設用法是 `log_parse --filter type=clip`。
+- pipeline 中預設用法是 `log_parse --filter type=clip`，但 demo 可搭配 `--build-full-log` 同時建立完整 structured event log。
 
 支援的 filter expressions：
 
