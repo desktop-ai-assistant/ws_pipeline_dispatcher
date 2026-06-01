@@ -140,32 +140,72 @@ cat /tmp/clips.db
 
 ### UDP Stream Demo Scripts
 
-為了把上游 ingestor 與 `pipeline_dispatcher` 的責任邊界具體化，`scripts/` 內提供兩個 shell script：
+為了把上游 ingestor 與 `pipeline_dispatcher` 的責任邊界具體化，`scripts/example/full-run/` 內提供 UDP demo：
 
-- `scripts/udp_stream_data_server.sh`
+- `scripts/example/full-run/udp_stream_data_server.sh`
   - 模擬上游 UDP ingestor
-  - 接收 `STRT` / `DATASEQ` / `END` datagrams
-  - append `{session_id}.bin` 與 `{session_id}.meta.jsonl`
+  - 接收 `STRT` / `SEGMENT` / `DATASEQ` / `END` datagrams
+  - `SEGMENT` 允許一個 MPEG-TS segment 拆成多個 UDP datagrams 傳輸；server 收齊後才 append 一次 `{session_id}.bin` 並寫一行 `{session_id}.meta.jsonl`
   - 在 `STRT` 後立即啟動 `pipeline_dispatcher`
-- `scripts/udp_stream_data_client.sh`
+- `scripts/example/full-run/udp_stream_data_client.sh`
+  - 預設用 `ffmpeg` 將 `scripts/example/full-run/videoplayback.mp4` 轉成 MPEG-TS segments
+  - 每個完整 `.ts` segment 會成為 `.bin` 中的一次 append；`.meta.jsonl` 一行對應一個 segment append
+  - `--max-chunks 0` 表示產生並傳送完整 input；預設 `--max-chunks 8` 只取前幾段做 smoke test
+  - `--wire-fragment-size 32768` 只控制 UDP datagram 大小，不是 media clip boundary
   - 傳送 normal demo 或 gap demo datagrams
 
 最小示例：
 
 ```bash
 make
-scripts/udp_stream_data_server.sh --root-dir /tmp/udp_demo --db /tmp/udp_demo/clips.db &
+scripts/example/full-run/udp_stream_data_server.sh --root-dir /tmp/udp_demo --db /tmp/udp_demo/clips.db &
 server_pid=$!
-scripts/udp_stream_data_client.sh --mode demo --session demo_udp
-scripts/udp_stream_data_client.sh --shutdown
+scripts/example/full-run/udp_stream_data_client.sh --mode demo --session demo_udp --max-chunks 128
+scripts/example/full-run/udp_stream_data_client.sh --shutdown
 wait "$server_pid"
 cat /tmp/udp_demo/clips.db
+scripts/example/full-run/extract_udp_clips.sh --db /tmp/udp_demo/clips.db --session demo_udp --out-dir /tmp/udp_demo/extracted
 ```
 
-這兩個 script 是 demo / contract 工具，不是正式 applet；它們的目的是說明：
+移除 `--max-chunks` 或設定 `--max-chunks 0` 會將整個 `videoplayback.mp4` 轉成 MPEG-TS segments 後傳送。`--mode gap` 會刻意讓 segment sequence 跳號，`stream_merge` 會在 gap 處結束目前 clip 並從下一段重新開始，因此可用來展示 broken stream 的 partial/restart 行為。
+
+一個 session 的 artifact 仍維持三個檔案：
+
+```text
+/tmp/udp_demo/demo_udp/demo_udp.bin        # append-only media segment buffer
+/tmp/udp_demo/demo_udp/demo_udp.meta.jsonl # one row per segment append
+/tmp/udp_demo/demo_udp/.pipeline_end       # session completion marker
+```
+
+`demo_udp.bin` 的內容是多個完整 MPEG-TS segments 串接：
+
+```text
+demo_udp.bin = segment_1.ts + segment_2.ts + segment_3.ts + ...
+```
+
+`stream_merge` 不解析影音格式；它只檢查 `sequence` 與 `offset` 是否連續，並用 `ts_ms` 的 window 聚合完整 segments。若目標 clip 是 5 秒但 segment 是 3 秒，clip 會對齊 segment boundary，例如輸出約 6 秒，而不是切斷單一 segment。
+
+`clips.db` 是 clip-level index，不直接存 media bytes。`extract_udp_clips.sh` 會用 `clip_store --prefix` / `--list` 讀出 clip objects，依 `session_id`、source path 與 `offset` 排序，再依每筆 record 的 `path` / `offset` / `length` 切出 raw binary：
+
+```text
+/tmp/udp_demo/extracted/raw/0001_demo_udp_...bin
+/tmp/udp_demo/extracted/manifest.jsonl
+```
+
+若系統有 `ffmpeg`，script 也會嘗試把切出的 raw bytes remux 成 `.mp4`，並將同一 session 的 clips 依序串成：
+
+```text
+/tmp/udp_demo/extracted/raw/demo_udp_ordered.bin
+/tmp/udp_demo/extracted/media/demo_udp_ordered.mp4
+```
+
+因為 demo input 已轉為 segment-aligned MPEG-TS，`extract_udp_clips.sh` 切出的 raw clip 會由一個或多個完整 `.ts` segments 組成；若系統有 `ffmpeg`，script 會嘗試 remux 成 `.mp4`。
+
+這些 script 是 demo / contract 工具，不是正式 applet；它們的目的是說明：
 
 - 上游 socket ingestor 負責落地 `.bin` 與 `.meta.jsonl`
 - `pipeline_dispatcher` 負責啟動 `stream_merge -> log_parse -> clip_store`
+- `clips.db` 保存 Agent 可查詢的 clip objects；extract script 才依 clip index 產生實體影音片段
 
 ## 目錄結構
 
@@ -189,12 +229,11 @@ cat /tmp/udp_demo/clips.db
 |   |-- clip_store.1                # man page: clip_store
 |   `-- pipeline_dispatcher.1       # man page: pipeline_dispatcher
 |-- scripts/
-|   |-- applets_pipline_example/    # 四個 applet 的最小可跑範例腳本
 |   |-- benchmark/
 |   |   `-- run_all.sh              # 與 jq, awk 的吞吐量效能對比基準測試
-|   |-- udp_stream_data_server.sh   # 模擬上游 UDP ingestor（demo 用）
-|   |-- udp_stream_data_client.sh   # 傳送 demo datagrams（demo 用）
-|   `-- gen_data.py                 # 測試資料產生器
+|   `-- example/
+|       |-- applets/                # 單一 applet demo scripts
+|       `-- full-run/               # UDP/full pipeline demo scripts 與本地 media input
 |-- tests/
 |   |-- lib/                        # lib 層 C unit tests
 |   |-- applets/                    # 各 applet C unit tests

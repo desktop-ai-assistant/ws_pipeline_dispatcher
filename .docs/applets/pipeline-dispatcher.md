@@ -67,6 +67,6 @@ applets/pipeline_dispatcher/
 
 ## 與上游 UDP demo 的關係
 
-`scripts/udp_stream_data_server.sh` 是 demo 用的上游 ingestor。它接收 UDP datagrams，落地 `{session_id}.bin` 與 `{session_id}.meta.jsonl`，然後在 session 開始後啟動 `pipeline_dispatcher`。
+`scripts/example/full-run/udp_stream_data_server.sh` 是 demo 用的上游 ingestor。它接收 UDP datagrams，落地 `{session_id}.bin` 與 `{session_id}.meta.jsonl`，然後在 session 開始後啟動 `pipeline_dispatcher`。
 
 這表示 dispatcher 的責任是 process orchestration，而不是 socket server。正式產品中，上游可以替換成 RTP receiver、WebSocket host 或其他 ingestor，只要產出的 filesystem contract 相同即可。
