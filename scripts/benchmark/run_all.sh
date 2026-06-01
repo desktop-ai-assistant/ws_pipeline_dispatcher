@@ -194,9 +194,9 @@ echo "Toybox:    ${TOYBOX:-NOT AVAILABLE}"
 if want_phase 1; then
 banner "Phase 1: Generating Datasets"
 rm -rf test_env && mkdir -p test_env
-python3 scripts/gen_data.py small
-python3 scripts/gen_data.py medium
-python3 scripts/gen_data.py jsonl
+python3 scripts/benchmark/gen_data.py small
+python3 scripts/benchmark/gen_data.py medium
+python3 scripts/benchmark/gen_data.py jsonl
 python3 - <<'PYAGG'
 import random
 random.seed(42)
