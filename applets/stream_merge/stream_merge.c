@@ -33,7 +33,7 @@ static int emit_clip(const sm_clip_record_t *clip, const char *src, const char *
     long ts_sec = (long)(clip->start_ts_ms / 1000);
     char filename[PATH_MAX];
     char path[PATH_MAX];
-    int n = snprintf(filename, sizeof(filename), "%s_%ld.bin", session, ts_sec);
+    int n = snprintf(filename, sizeof(filename), "%s.bin", session);
     if (n < 0 || (size_t)n >= sizeof(filename) ||
         lp_build_artifact_path(path, sizeof(path), src, filename) != 0) {
         LOG_ERROR("path too long for session %s", session);
@@ -47,9 +47,14 @@ static int emit_clip(const sm_clip_record_t *clip, const char *src, const char *
         "\"path\":\"%s\","
         "\"offset\":%" PRIu64 ","
         "\"length\":%" PRIu64 ","
+        "\"start_ts_ms\":%" PRId64 ","
+        "\"end_ts_ms\":%" PRId64 ","
+        "\"duration_ms\":%" PRId64 ","
         "\"complete\":%s",
         session, ts_sec, path,
         clip->start_offset, clip->total_length,
+        clip->start_ts_ms, clip->end_ts_ms,
+        clip->end_ts_ms - clip->start_ts_ms,
         complete ? "true" : "false");
     if (rc < 0) {
         return -1;
