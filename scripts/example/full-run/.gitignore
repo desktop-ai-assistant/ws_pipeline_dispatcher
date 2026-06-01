@@ -1,0 +1,9 @@
+*.mp4
+*.bin
+*.db
+*.log
+*.jsonl
+*.ts
+segments/
+__pycache__/
+*.pyc
