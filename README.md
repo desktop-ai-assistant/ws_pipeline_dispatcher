@@ -191,6 +191,18 @@ FORCE=1 scripts/example/full-run/prepare_segments.sh
 MAX_CHUNKS=20 MODE=gap scripts/example/full-run/full-run.sh
 ```
 
+若要專門展示 gap / broken stream 行為，可跑：
+
+```bash
+scripts/example/full-run/full-run-gap.sh
+```
+
+它會輸出到獨立目錄，讓斷裂片段更容易辨識：
+
+```text
+scripts/example/full-run/.log/udp_demo_gap/extracted/.gap/
+```
+
 預設會重用 `.log/segments/` 裡的 MPEG-TS segments 並持續傳送完整 input，以展示 pipeline 可以同步處理持續輸入；若 demo 時間有限，可設定 `MAX_CHUNKS=N` 或 `--max-chunks N` 只傳前 N 段。`--mode gap` 會刻意讓 segment sequence 跳號，`stream_merge` 會在 gap 處結束目前 clip 並從下一段重新開始，因此可用來展示 broken stream 的 partial/restart 行為。
 
 `full-run.sh` 會在傳輸期間同步監看 `clips.db`，每次 clip index 更新就呼叫 `extract_udp_clips.sh` 切出 raw clip 並嘗試 remux 成 `.mp4`。可用 `LIVE_EXTRACT=0` 關閉，或用 `EXTRACT_INTERVAL=0.5` 調整輪詢間隔。
