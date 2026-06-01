@@ -167,6 +167,18 @@ wait "$server_pid"
 cat /tmp/udp_demo/clips.db
 ```
 
+若要一鍵跑完整 demo，包含事前清除 `/tmp/udp_demo`、啟動 server、傳送前 100 段、auto extraction 與 shutdown：
+
+```bash
+scripts/example/full-run/full-run.sh
+```
+
+可用環境變數調整，例如：
+
+```bash
+MAX_CHUNKS=20 MODE=gap scripts/example/full-run/full-run.sh
+```
+
 移除 `--max-chunks` 會傳送前 100 段；設定 `--max-chunks 0` 會將整個 `videoplayback.mp4` 轉成 MPEG-TS segments 後傳送。`--mode gap` 會刻意讓 segment sequence 跳號，`stream_merge` 會在 gap 處結束目前 clip 並從下一段重新開始，因此可用來展示 broken stream 的 partial/restart 行為。
 
 client 傳送 `END` 後會自動執行 extraction。預設讀取 `/tmp/udp_demo/clips.db`，輸出到 `/tmp/udp_demo/extracted`；若 demo 使用不同路徑，可指定：
