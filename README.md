@@ -150,7 +150,7 @@ cat /tmp/clips.db
 - `scripts/example/full-run/udp_stream_data_client.sh`
   - 預設用 `ffmpeg` 將 `scripts/example/full-run/videoplayback.mp4` 轉成 MPEG-TS segments
   - 每個完整 `.ts` segment 會成為 `.bin` 中的一次 append；`.meta.jsonl` 一行對應一個 segment append
-  - `--max-chunks 0` 表示產生並傳送完整 input；預設 `--max-chunks 100` 只取前 100 段做 demo
+  - 預設 `--max-chunks 0`，表示持續傳送完整 input；可用 `--max-chunks N` 縮短 smoke test
   - `--wire-fragment-size 32768` 只控制 UDP datagram 大小，不是 media clip boundary
   - 傳輸結束後預設會呼叫 `extract_udp_clips.sh`，從 `clips.db` 切出 raw clips 並嘗試 remux 成 `.mp4`
   - 傳送 normal demo 或 gap demo datagrams
@@ -167,7 +167,7 @@ wait "$server_pid"
 cat /tmp/udp_demo/clips.db
 ```
 
-若要一鍵跑完整 demo，包含事前清除 `/tmp/udp_demo`、啟動 server、傳送前 100 段、auto extraction 與 shutdown：
+若要一鍵跑完整 demo，包含事前清除 `/tmp/udp_demo`、啟動 server、持續傳送完整 input、auto extraction 與 shutdown：
 
 ```bash
 scripts/example/full-run/full-run.sh
@@ -179,7 +179,7 @@ scripts/example/full-run/full-run.sh
 MAX_CHUNKS=20 MODE=gap scripts/example/full-run/full-run.sh
 ```
 
-移除 `--max-chunks` 會傳送前 100 段；設定 `--max-chunks 0` 會將整個 `videoplayback.mp4` 轉成 MPEG-TS segments 後傳送。`--mode gap` 會刻意讓 segment sequence 跳號，`stream_merge` 會在 gap 處結束目前 clip 並從下一段重新開始，因此可用來展示 broken stream 的 partial/restart 行為。
+預設會將整個 `videoplayback.mp4` 轉成 MPEG-TS segments 後傳送，以展示 pipeline 可以同步處理持續輸入；若 demo 時間有限，可設定 `MAX_CHUNKS=N` 或 `--max-chunks N` 只傳前 N 段。`--mode gap` 會刻意讓 segment sequence 跳號，`stream_merge` 會在 gap 處結束目前 clip 並從下一段重新開始，因此可用來展示 broken stream 的 partial/restart 行為。
 
 client 傳送 `END` 後會自動執行 extraction。預設讀取 `/tmp/udp_demo/clips.db`，輸出到 `/tmp/udp_demo/extracted`；若 demo 使用不同路徑，可指定：
 

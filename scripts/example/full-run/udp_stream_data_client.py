@@ -23,7 +23,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--segment-time", type=float, default=float(os.environ.get("SEGMENT_TIME", "1.0")), help="seconds per generated MPEG-TS segment")
     parser.add_argument("--segment-dir", default=os.environ.get("SEGMENT_DIR", ""), help="reuse/write MPEG-TS segments in this directory")
     parser.add_argument("--wire-fragment-size", type=int, default=int(os.environ.get("WIRE_FRAGMENT_SIZE", "32768")), help="bytes per UDP datagram when sending one segment")
-    parser.add_argument("--max-chunks", type=int, default=int(os.environ.get("MAX_CHUNKS", "100")), help="maximum raw chunks or media segments to send; 0 streams until EOF")
+    parser.add_argument("--max-chunks", type=int, default=int(os.environ.get("MAX_CHUNKS", "0")), help="maximum raw chunks or media segments to send; 0 streams until EOF")
     parser.add_argument("--ts-step-ms", type=int, default=int(os.environ.get("TS_STEP_MS", "0")), help="timestamp increment per raw chunk; 0 uses segment-time in mpegts mode")
     parser.add_argument("--ffmpeg", default=os.environ.get("FFMPEG", "ffmpeg"), help="ffmpeg binary used to generate MPEG-TS segments")
     parser.add_argument("--delay", type=float, default=float(os.environ.get("SEND_DELAY", "0.001")), help="sleep seconds between packets")
