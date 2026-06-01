@@ -12,7 +12,10 @@ from tempfile import TemporaryDirectory
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Send demo UDP packets to udp_stream_data_server.py.")
-    default_extract_db = os.environ.get("EXTRACT_DB", os.environ.get("DB_PATH", "/tmp/udp_demo/clips.db"))
+    script_dir = Path(__file__).resolve().parent
+    default_log_dir = script_dir / ".log" / "udp_demo"
+    default_extract_db = os.environ.get("EXTRACT_DB", os.environ.get("DB_PATH", str(default_log_dir / "clips.db")))
+    default_segment_dir = os.environ.get("SEGMENT_DIR", str(script_dir / ".log" / "segments"))
     parser.add_argument("--host", default=os.environ.get("HOST", "127.0.0.1"), help="server host")
     parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", "10005")), help="server port")
     parser.add_argument("--session", default=os.environ.get("SESSION", "demo_udp_session"), help="session id")
@@ -21,7 +24,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--format", choices=("mpegts", "raw"), default=os.environ.get("STREAM_FORMAT", "mpegts"), help="send media-aligned MPEG-TS segments or legacy fixed-size raw chunks")
     parser.add_argument("--chunk-size", type=int, default=int(os.environ.get("CHUNK_SIZE", "32768")), help="raw mode bytes per DATASEQ packet")
     parser.add_argument("--segment-time", type=float, default=float(os.environ.get("SEGMENT_TIME", "1.0")), help="seconds per generated MPEG-TS segment")
-    parser.add_argument("--segment-dir", default=os.environ.get("SEGMENT_DIR", ""), help="reuse/write MPEG-TS segments in this directory")
+    parser.add_argument("--segment-dir", default=default_segment_dir, help="reuse/write MPEG-TS segments in this directory")
     parser.add_argument("--wire-fragment-size", type=int, default=int(os.environ.get("WIRE_FRAGMENT_SIZE", "32768")), help="bytes per UDP datagram when sending one segment")
     parser.add_argument("--max-chunks", type=int, default=int(os.environ.get("MAX_CHUNKS", "0")), help="maximum raw chunks or media segments to send; 0 streams until EOF")
     parser.add_argument("--ts-step-ms", type=int, default=int(os.environ.get("TS_STEP_MS", "0")), help="timestamp increment per raw chunk; 0 uses segment-time in mpegts mode")
