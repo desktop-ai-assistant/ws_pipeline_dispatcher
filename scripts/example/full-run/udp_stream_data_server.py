@@ -10,7 +10,7 @@ import sys
 
 
 def parse_args() -> argparse.Namespace:
-    root_dir = os.environ.get("ROOT_DIR", "/tmp/udp_stream_data")
+    root_dir = os.environ.get("ROOT_DIR", "/tmp/udp_demo")
     parser = argparse.ArgumentParser(description="Run a tiny UDP ingestor demo for pipeline_dispatcher.")
     parser.add_argument("--host", default=os.environ.get("HOST", "0.0.0.0"), help="bind address")
     parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", "10005")), help="UDP port")

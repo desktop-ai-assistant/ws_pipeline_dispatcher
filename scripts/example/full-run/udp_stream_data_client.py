@@ -228,6 +228,7 @@ def run_auto_extract(args: argparse.Namespace) -> None:
         time.sleep(0.5)
 
     log(f"auto extract skipped; clips not ready in {args.extract_wait:g}s db={db_path}")
+    log("start udp_stream_data_server.sh first, or pass --extract-db matching the server --db path")
     if last_stderr:
         log(last_stderr.splitlines()[-1])
 
