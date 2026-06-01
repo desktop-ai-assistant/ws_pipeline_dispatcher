@@ -4,19 +4,21 @@ set -eu
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
-ROOT_DIR=${ROOT_DIR:-/tmp/udp_demo}
+ROOT_DIR=${ROOT_DIR:-$SCRIPT_DIR/.log/udp_demo}
 DB_PATH=${DB_PATH:-$ROOT_DIR/clips.db}
 SESSION=${SESSION:-demo_udp_session}
 HOST=${HOST:-127.0.0.1}
 PORT=${PORT:-10005}
 MAX_CHUNKS=${MAX_CHUNKS:-0}
 SEGMENT_TIME=${SEGMENT_TIME:-1.0}
+PREPARE_MAX_CHUNKS=${PREPARE_MAX_CHUNKS:-0}
 SEND_DELAY=${SEND_DELAY:-0.001}
 LOG_EVERY=${LOG_EVERY:-1}
 MODE=${MODE:-demo}
 EXTRACT_OUT_DIR=${EXTRACT_OUT_DIR:-$ROOT_DIR/extracted}
 EXTRACT_INTERVAL=${EXTRACT_INTERVAL:-1}
 LIVE_EXTRACT=${LIVE_EXTRACT:-1}
+SEGMENT_DIR=${SEGMENT_DIR:-$SCRIPT_DIR/.log/segments}
 
 run_extract_once() {
     if [ ! -f "$DB_PATH" ]; then
@@ -75,6 +77,9 @@ mkdir -p "$ROOT_DIR"
 printf '[full-run] building binaries\n' >&2
 make
 
+printf '[full-run] preparing reusable segments dir=%s\n' "$SEGMENT_DIR" >&2
+SEGMENT_DIR="$SEGMENT_DIR" SEGMENT_TIME="$SEGMENT_TIME" MAX_CHUNKS="$PREPARE_MAX_CHUNKS" "$SCRIPT_DIR/prepare_segments.sh"
+
 printf '[full-run] starting server root=%s db=%s\n' "$ROOT_DIR" "$DB_PATH" >&2
 "$SCRIPT_DIR/udp_stream_data_server.sh" \
     --host "$HOST" \
@@ -94,6 +99,7 @@ printf '[full-run] sending session=%s mode=%s max_chunks=%s\n' "$SESSION" "$MODE
     --mode "$MODE" \
     --max-chunks "$MAX_CHUNKS" \
     --segment-time "$SEGMENT_TIME" \
+    --segment-dir "$SEGMENT_DIR" \
     --delay "$SEND_DELAY" \
     --log-every "$LOG_EVERY" \
     --extract-db "$DB_PATH" \

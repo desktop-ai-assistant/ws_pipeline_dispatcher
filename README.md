@@ -167,10 +167,22 @@ wait "$server_pid"
 cat /tmp/udp_demo/clips.db
 ```
 
-若要一鍵跑完整 demo，包含事前清除 `/tmp/udp_demo`、啟動 server、持續傳送完整 input、live extraction 與 shutdown：
+若要一鍵跑完整 demo，包含事前清除 `scripts/example/full-run/.log/udp_demo`、啟動 server、持續傳送完整 input、live extraction 與 shutdown：
 
 ```bash
 scripts/example/full-run/full-run.sh
+```
+
+為了讓 demo 啟動更快，可以先預切 MPEG-TS segments。輸出會放在 `scripts/example/full-run/.log/segments/`，之後 `full-run.sh` 會直接重用，不會每次重新跑 ffmpeg。`full-run.sh` 的 demo output 預設也會放在 `scripts/example/full-run/.log/udp_demo/`：
+
+```bash
+scripts/example/full-run/prepare_segments.sh
+```
+
+若要重建 segments：
+
+```bash
+FORCE=1 scripts/example/full-run/prepare_segments.sh
 ```
 
 可用環境變數調整，例如：
@@ -179,7 +191,7 @@ scripts/example/full-run/full-run.sh
 MAX_CHUNKS=20 MODE=gap scripts/example/full-run/full-run.sh
 ```
 
-預設會將整個 `videoplayback.mp4` 轉成 MPEG-TS segments 後傳送，以展示 pipeline 可以同步處理持續輸入；若 demo 時間有限，可設定 `MAX_CHUNKS=N` 或 `--max-chunks N` 只傳前 N 段。`--mode gap` 會刻意讓 segment sequence 跳號，`stream_merge` 會在 gap 處結束目前 clip 並從下一段重新開始，因此可用來展示 broken stream 的 partial/restart 行為。
+預設會重用 `.log/segments/` 裡的 MPEG-TS segments 並持續傳送完整 input，以展示 pipeline 可以同步處理持續輸入；若 demo 時間有限，可設定 `MAX_CHUNKS=N` 或 `--max-chunks N` 只傳前 N 段。`--mode gap` 會刻意讓 segment sequence 跳號，`stream_merge` 會在 gap 處結束目前 clip 並從下一段重新開始，因此可用來展示 broken stream 的 partial/restart 行為。
 
 `full-run.sh` 會在傳輸期間同步監看 `clips.db`，每次 clip index 更新就呼叫 `extract_udp_clips.sh` 切出 raw clip 並嘗試 remux 成 `.mp4`。可用 `LIVE_EXTRACT=0` 關閉，或用 `EXTRACT_INTERVAL=0.5` 調整輪詢間隔。
 
