@@ -12,6 +12,7 @@ from tempfile import TemporaryDirectory
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Send demo UDP packets to udp_stream_data_server.py.")
+    default_extract_db = os.environ.get("EXTRACT_DB", os.environ.get("DB_PATH", "/tmp/udp_demo/clips.db"))
     parser.add_argument("--host", default=os.environ.get("HOST", "127.0.0.1"), help="server host")
     parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", "10005")), help="server port")
     parser.add_argument("--session", default=os.environ.get("SESSION", "demo_udp_session"), help="session id")
@@ -22,11 +23,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--segment-time", type=float, default=float(os.environ.get("SEGMENT_TIME", "1.0")), help="seconds per generated MPEG-TS segment")
     parser.add_argument("--segment-dir", default=os.environ.get("SEGMENT_DIR", ""), help="reuse/write MPEG-TS segments in this directory")
     parser.add_argument("--wire-fragment-size", type=int, default=int(os.environ.get("WIRE_FRAGMENT_SIZE", "32768")), help="bytes per UDP datagram when sending one segment")
-    parser.add_argument("--max-chunks", type=int, default=int(os.environ.get("MAX_CHUNKS", "8")), help="maximum raw chunks or media segments to send; 0 streams until EOF")
+    parser.add_argument("--max-chunks", type=int, default=int(os.environ.get("MAX_CHUNKS", "100")), help="maximum raw chunks or media segments to send; 0 streams until EOF")
     parser.add_argument("--ts-step-ms", type=int, default=int(os.environ.get("TS_STEP_MS", "0")), help="timestamp increment per raw chunk; 0 uses segment-time in mpegts mode")
     parser.add_argument("--ffmpeg", default=os.environ.get("FFMPEG", "ffmpeg"), help="ffmpeg binary used to generate MPEG-TS segments")
     parser.add_argument("--delay", type=float, default=float(os.environ.get("SEND_DELAY", "0.001")), help="sleep seconds between packets")
     parser.add_argument("--log-every", type=int, default=int(os.environ.get("LOG_EVERY", "1000")), help="log every N DATASEQ packets after the first few")
+    parser.add_argument("--extract-db", default=default_extract_db, help="clips.db path used for automatic extraction after END")
+    parser.add_argument("--extract-out-dir", default=os.environ.get("EXTRACT_OUT_DIR", ""), help="output directory for automatic clip extraction")
+    parser.add_argument("--extract-script", default=os.environ.get("EXTRACT_SCRIPT", str(Path(__file__).with_name("extract_udp_clips.sh"))), help="clip extraction script path")
+    parser.add_argument("--extract-wait", type=float, default=float(os.environ.get("EXTRACT_WAIT", "15")), help="seconds to wait for clip_store output before extraction")
+    parser.add_argument("--no-extract", action="store_true", help="skip automatic extraction after sending END")
     parser.add_argument("--shutdown", action="store_true", help="ask the server to stop")
     return parser.parse_args()
 
@@ -185,6 +191,45 @@ def send_stream(sock: socket.socket, args: argparse.Namespace, gap: bool) -> Non
         raise SystemExit(f"input file is empty: {args.input}")
     log(f"streamed chunks={sent_chunks} bytes={total_bytes} input={args.input}")
     send_line(sock, args.host, args.port, "END")
+    run_auto_extract(args)
+
+
+def run_auto_extract(args: argparse.Namespace) -> None:
+    if args.no_extract:
+        return
+    if not args.extract_db:
+        log("auto extract skipped; --extract-db is empty")
+        return
+
+    extract_script = Path(args.extract_script)
+    if not extract_script.is_file():
+        log(f"auto extract skipped; script not found: {extract_script}")
+        return
+
+    db_path = Path(args.extract_db)
+    out_dir = Path(args.extract_out_dir) if args.extract_out_dir else db_path.parent / "extracted"
+    deadline = time.monotonic() + max(args.extract_wait, 0)
+    cmd = [str(extract_script), "--db", str(db_path), "--session", args.session, "--out-dir", str(out_dir)]
+
+    last_stderr = ""
+    while True:
+        if db_path.is_file():
+            proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+            if proc.returncode == 0:
+                if proc.stdout:
+                    sys.stdout.write(proc.stdout)
+                if proc.stderr:
+                    sys.stderr.write(proc.stderr)
+                log(f"auto extract complete out_dir={out_dir}")
+                return
+            last_stderr = proc.stderr.strip()
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(0.5)
+
+    log(f"auto extract skipped; clips not ready in {args.extract_wait:g}s db={db_path}")
+    if last_stderr:
+        log(last_stderr.splitlines()[-1])
 
 
 def send_segment_stream(sock: socket.socket, args: argparse.Namespace, gap: bool) -> None:
@@ -214,6 +259,7 @@ def send_segment_stream(sock: socket.socket, args: argparse.Namespace, gap: bool
             )
         log(f"streamed segments={len(segments)} bytes={total_bytes} input={args.input}")
         send_line(sock, args.host, args.port, "END")
+        run_auto_extract(args)
     finally:
         if temp is not None:
             temp.cleanup()
