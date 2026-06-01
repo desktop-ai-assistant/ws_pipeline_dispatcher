@@ -36,8 +36,8 @@ def start_session(session_id: str, root_dir: pathlib.Path, dispatcher: str, ttl:
     session_dir.mkdir(parents=True, exist_ok=True)
     bin_path = session_dir / f"{session_id}.bin"
     meta_path = session_dir / f"{session_id}.meta.jsonl"
-    bin_fp = open(bin_path, "ab", buffering=0)
-    meta_fp = open(meta_path, "a", encoding="utf-8")
+    bin_fp = open(bin_path, "wb", buffering=0)
+    meta_fp = open(meta_path, "w", encoding="utf-8")
     proc = subprocess.Popen(
         [dispatcher, "--ttl", ttl, session_id, str(session_dir), db_path],
         stdout=subprocess.DEVNULL,

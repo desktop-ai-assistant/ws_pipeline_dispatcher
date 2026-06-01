@@ -171,6 +171,7 @@ def send_segment(sock: socket.socket, args: argparse.Namespace, seq: int, ts_ms:
 def send_stream(sock: socket.socket, args: argparse.Namespace, gap: bool) -> None:
     total_bytes = 0
     sent_chunks = 0
+    args.extract_after = time.time()
     send_line(sock, args.host, args.port, f"STRT {args.session}")
     for chunk_index, chunk in stream_chunks(args.input, args.chunk_size, args.max_chunks):
         seq = chunk_index + 3 if gap and chunk_index > 1 else chunk_index
@@ -213,7 +214,7 @@ def run_auto_extract(args: argparse.Namespace) -> None:
 
     last_stderr = ""
     while True:
-        if db_path.is_file():
+        if db_path.is_file() and db_path.stat().st_mtime >= getattr(args, "extract_after", 0):
             proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
             if proc.returncode == 0:
                 if proc.stdout:
@@ -229,6 +230,7 @@ def run_auto_extract(args: argparse.Namespace) -> None:
 
     log(f"auto extract skipped; clips not ready in {args.extract_wait:g}s db={db_path}")
     log("start udp_stream_data_server.sh first, or pass --extract-db matching the server --db path")
+    log("if this was a rerun, remove the old /tmp/udp_demo directory before starting the server")
     if last_stderr:
         log(last_stderr.splitlines()[-1])
 
@@ -245,6 +247,7 @@ def send_segment_stream(sock: socket.socket, args: argparse.Namespace, gap: bool
 
     total_bytes = 0
     step_ms = args.ts_step_ms if args.ts_step_ms > 0 else int(args.segment_time * 1000)
+    args.extract_after = time.time()
     send_line(sock, args.host, args.port, f"STRT {args.session}")
     try:
         for segment_index, segment_path in enumerate(segments, start=1):
