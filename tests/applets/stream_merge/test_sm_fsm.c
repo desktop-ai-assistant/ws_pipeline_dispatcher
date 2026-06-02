@@ -121,11 +121,62 @@ static void test_fsm_check_idle_and_flush(void)
     CHECK(fsm.active == 0);
 }
 
+static void test_fsm_continuous_byte_range(void)
+{
+    sm_fsm_t fsm;
+    sm_fsm_reset(&fsm);
+
+    sm_meta_record_t rec1 = {
+        .seq = 1,
+        .offset = 0,
+        .length = 3000,
+        .ts_ms = 0,
+        .continuous = 1,
+        .byte_rate = 1000,
+        .frame_align = 1,
+        .valid = 1
+    };
+    strcpy(rec1.kind, "data");
+
+    sm_meta_record_t rec2 = {
+        .seq = 2,
+        .offset = 3000,
+        .length = 3000,
+        .ts_ms = 3000,
+        .continuous = 1,
+        .byte_rate = 1000,
+        .frame_align = 1,
+        .valid = 1
+    };
+    strcpy(rec2.kind, "data");
+
+    sm_clip_record_t out;
+    CHECK(sm_fsm_process_record(&fsm, &rec1, 5000, 100, &out) == SM_FSM_NONE);
+    CHECK(sm_fsm_process_record(&fsm, &rec2, 5000, 200, &out) == SM_FSM_EMIT_COMPLETE);
+    CHECK(out.start_offset == 0);
+    CHECK(out.total_length == 5000);
+    CHECK(out.start_ts_ms == 0);
+    CHECK(out.end_ts_ms == 5000);
+    CHECK(out.boundary_mode == SM_BOUNDARY_CONTINUOUS_BYTE_RANGE);
+
+    CHECK(fsm.active == 1);
+    CHECK(fsm.start_offset == 5000);
+    CHECK(fsm.total_length == 1000);
+    CHECK(fsm.expected_seq == 3);
+    CHECK(fsm.expected_offset == 6000);
+
+    CHECK(sm_fsm_flush_final(&fsm, &out) == SM_FSM_EMIT_COMPLETE);
+    CHECK(out.start_offset == 5000);
+    CHECK(out.total_length == 1000);
+    CHECK(out.boundary_mode == SM_BOUNDARY_METADATA);
+}
+
 int main(void)
 {
     test_fsm_reset();
     test_fsm_process_record();
     test_fsm_check_idle_and_flush();
+    test_fsm_continuous_byte_range();
 
     if (failures == 0) {
         printf("OK: sm_fsm tests passed\n");

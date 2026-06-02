@@ -50,11 +50,13 @@ static int emit_clip(const sm_clip_record_t *clip, const char *src, const char *
         "\"start_ts_ms\":%" PRId64 ","
         "\"end_ts_ms\":%" PRId64 ","
         "\"duration_ms\":%" PRId64 ","
+        "\"boundary_mode\":\"%s\","
         "\"complete\":%s",
         session, ts_sec, path,
         clip->start_offset, clip->total_length,
         clip->start_ts_ms, clip->end_ts_ms,
         clip->end_ts_ms - clip->start_ts_ms,
+        clip->boundary_mode == SM_BOUNDARY_CONTINUOUS_BYTE_RANGE ? "continuous_byte_range" : "metadata_boundary",
         complete ? "true" : "false");
     if (rc < 0) {
         return -1;

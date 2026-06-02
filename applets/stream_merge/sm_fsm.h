@@ -14,9 +14,17 @@ typedef struct {
     uint64_t offset;            /* Byte offset in the session .bin file. */
     uint64_t length;            /* Payload length in bytes. */
     int64_t ts_ms;              /* Source timestamp in milliseconds. */
+    int continuous;             /* 1 when byte offsets map linearly to time. */
+    uint64_t byte_rate;         /* Bytes per second for continuous streams. */
+    uint64_t frame_align;       /* Optional byte alignment for exact cuts. */
     sm_event_set_t events;      /* Optional events attached to this chunk. */
     int valid;                  /* 1 when parsing and validation succeeded. */
 } sm_meta_record_t;
+
+typedef enum {
+    SM_BOUNDARY_METADATA = 0,
+    SM_BOUNDARY_CONTINUOUS_BYTE_RANGE
+} sm_boundary_mode_t;
 
 /**
  * @brief One clip byte-range snapshot produced by the FSM.
@@ -27,6 +35,7 @@ typedef struct {
     int64_t end_ts_ms;
     uint64_t start_offset;
     uint64_t total_length;
+    sm_boundary_mode_t boundary_mode;
     sm_event_set_t events;
 } sm_clip_record_t;
 
@@ -42,6 +51,10 @@ typedef struct {
     uint64_t expected_seq;
     uint64_t expected_offset;
     int64_t last_chunk_wall_ms;
+    int continuous;
+    uint64_t byte_rate;
+    uint64_t frame_align;
+    sm_boundary_mode_t boundary_mode;
     sm_event_set_t events;
 } sm_fsm_t;
 
