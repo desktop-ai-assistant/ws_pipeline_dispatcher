@@ -1,664 +1,772 @@
 # Contributing to stream-data-pipeline
 
-Thank you for your interest in contributing to `stream-data-pipeline`! This document guides contributors through our development process, expectations, and best practices.
+Thank you for contributing to `stream-data-pipeline`.
 
-## Project Philosophy
+This repository implements the **Embedded Stream Data Pipeline** final project: a C-based BusyBox-style toolset that turns append-only embedded session artifacts into structured clip metadata, filterable JSON Lines, and a lightweight file-backed clip index.
 
-Before you start contributing, please understand the core UNIX principles that `stream-data-pipeline` follows:
+The core flow is:
 
-- **Single Responsibility**: Each applet (`stream_merge`, `log_parse`, `clip_store`) has one job
-- **Composition over Complexity**: Tools are designed to be combined via pipes, not monolithic
-- **Stream Discipline**: stdout only carries structured data; stderr only carries diagnostics
-- **Minimal Dependencies**: Pure C implementation for resource-constrained embedded environments
-
-When contributing, respect this philosophy. Avoid adding bloated features or breaking UNIX principles.
-
----
-
-## 1. What Kind of Help Do We Need?
-
-We welcome contributions in the following areas:
-
-### New Features & Functions
-- When edge devices (ESP32) or data sources support new capabilities, implement new functions
-- Extend `stream_merge`, `log_parse`, or `clip_store` with additional features
-- Add support for new data formats or protocols
-
-### Documentation & Examples
-- Improve and update the README and documentation
-- Provide example code and usage patterns
-- Fix typos or clarify unclear sections
-- Expand the `.docs/` directory with architectural explanations
-
-### Bug Reports & Fixes
-- Report issues you encounter while using the tools
-- Fix bugs in existing code
-- Improve error handling and edge case coverage
-- Fix documentation errors and inconsistencies
-
-### Performance & Optimization
-- Profile and optimize hot paths
-- Reduce memory footprint for embedded environments
-- Improve streaming data processing performance
-
-### Testing Improvements
-- Add more comprehensive unit tests
-- Write integration tests for complex scenarios
-- Test on different platforms and edge cases
-
-### Finding Issues to Contribute To
-
-We use GitHub labels to help contributors find work that matches their interests. **New contributors should start with these labels:**
-
-- **`good first issue`** ⭐ - Great starting points for newcomers, usually small scope and low difficulty
-- **`help wanted`** - Areas where we especially need assistance, higher priority
-- **`bug`** - Known issues that need fixing
-- **`documentation`** - Documentation improvements, no deep technical knowledge needed
-- **`enhancement`** - Feature requests and improvements
-- **`question`** - Design questions and discussions
-
-**How to find issues:**
-```bash
-1. Go to the "Issues" tab on GitHub
-2. Use the "Labels" filter on the left sidebar
-3. Select "good first issue" or "help wanted"
-4. Read the issue description and ask questions in comments if unsure
+```text
+ESP32 / UDP-RTP-like stream / edge ingestor
+  -> session artifact on disk
+  -> pipeline_dispatcher
+  -> stream_merge | log_parse --filter type=clip | clip_store
+  -> clips.db
 ```
 
-Don't worry about asking for clarification! Maintainers are happy to guide new contributors.
+Read this guide before opening an issue, pull request, benchmark result, or documentation change.
 
 ---
 
-## 2. Development Conventions & Code Style
+## Table of Contents
 
-To maintain code consistency and readability, please follow these conventions.
+1. [Project Philosophy](#1-project-philosophy)
+2. [Project Scope and Session Artifact Contract](#2-project-scope-and-session-artifact-contract)
+3. [What Contributions Are Welcome](#3-what-contributions-are-welcome)
+4. [Architecture and Applet Responsibilities](#4-architecture-and-applet-responsibilities)
+5. [Behavioral Contracts](#5-behavioral-contracts)
+6. [Development Setup](#6-development-setup)
+7. [Code Style](#7-code-style)
+8. [Testing Expectations](#8-testing-expectations)
+9. [Benchmark and Performance Rules](#9-benchmark-and-performance-rules)
+10. [Documentation Rules](#10-documentation-rules)
+11. [Git Workflow](#11-git-workflow)
+12. [Commit Message Format](#12-commit-message-format)
+13. [Pull Request Expectations](#13-pull-request-expectations)
+14. [Issue Reports and Troubleshooting](#14-issue-reports-and-troubleshooting)
+15. [Compatibility and Current Limits](#15-compatibility-and-current-limits)
+16. [Pre-Submission Checklist](#16-pre-submission-checklist)
+17. [Questions and Security](#17-questions-and-security)
 
-### Development Environment Setup
+---
 
-#### Prerequisites
+## 1. Project Philosophy
 
-- **C Compiler**: GCC or Clang (C11 or later)
-- **POSIX Environment**: Linux, macOS, or WSL2
-- **Build Tools**: GNU Make, standard POSIX utilities (sh, grep, tail)
-- **Optional**: `valgrind` for memory leak detection, `clang-format` for code formatting
+`stream-data-pipeline` follows UNIX system programming principles:
 
-#### Building & Compilation
+- **Single responsibility** — each applet has one clear job.
+- **Composition over monoliths** — tools are chained through pipes, not merged into a single binary.
+- **Stream discipline** — `stdout` carries data only; `stderr` carries diagnostics only.
+- **File-backed contracts** — session data is exchanged through append-only files and metadata sidecars.
+- **Minimal dependencies** — the core is C11/POSIX-oriented and suitable for constrained embedded Linux-like environments.
+- **Observable behavior** — CLI behavior, exit codes, tests, and documentation should make each change easy to verify.
+
+Do not add features that make one applet do another applet's job. When in doubt, keep the pipeline smaller, more explicit, and easier to test.
+
+---
+
+## 2. Project Scope and Session Artifact Contract
+
+This repository is the **downstream UNIX pipeline layer**. It is not a WebSocket server, a UDP/RTP packet receiver, an ESP32 parser, or a media transcoder.
+
+An upper layer — such as `edge-ws-host` or a UDP demo server — is responsible for receiving packets and writing the session artifact to disk. This repository's work begins after the session artifact exists.
+
+Expected session layout:
+
+```text
+/tmp/stream/{session_id}/
+  {session_id}.bin
+  {session_id}.meta.jsonl
+  .pipeline_end
+```
+
+Artifact contract:
+
+| File | Meaning | Contributor rule |
+| --- | --- | --- |
+| `{session_id}.bin` | Append-only binary payload buffer for the whole session | Do not rewrite earlier bytes during ingestion. |
+| `{session_id}.meta.jsonl` | Sidecar metadata index with sequence, offset, length, timestamp, and optional events | Treat metadata as the source of truth for clip boundaries. |
+| `.pipeline_end` | Sentinel marking that the session has ended | Use this exact spelling. Do not introduce `.pipline_end` or any other variant. |
+
+Important assumptions:
+
+- Data may originate from UDP/RTP-like transport, so chunk loss, gaps, duplicates, and late arrivals are possible.
+- `.bin` stores raw appended bytes — it is not the index.
+- `.meta.jsonl` is the byte-range index that tells the pipeline which part of `.bin` belongs to a clip.
+- A clip index is not the same as a physical video file. `clips.db` stores clip records; extraction and remuxing belong to demo scripts or future media tooling.
+
+---
+
+## 3. What Contributions Are Welcome
+
+### Features and applet improvements
+
+- Improve `pipeline_dispatcher`, `stream_merge`, `log_parse`, or `clip_store` while preserving their responsibility boundaries.
+- Add narrowly scoped CLI options with tests and man page updates.
+- Improve edge cases: malformed metadata, EOF handling, gap handling, TTL behavior, compaction safety.
+
+### Documentation and examples
+
+- Improve `README.md`, `man/*.1`, `.docs/`, and example scripts.
+- Add architecture explanations, sequence diagrams, or demo instructions.
+- Fix terminology drift between code, documentation, benchmark notes, and presentation slides.
+
+### Bugs and reliability
+
+- Fix parsing, filtering, process lifecycle, file-locking, or storage bugs.
+- Improve diagnostics without polluting `stdout`.
+- Add regression tests for previously broken behavior.
+
+### Performance and embedded constraints
+
+- Reduce memory usage and unnecessary allocations.
+- Improve streaming throughput.
+- Improve benchmark reproducibility.
+- Compare fairly against GNU/Toybox-style tools with the correct benchmark category.
+
+### Testing
+
+- Add unit tests for `lib/` and applet internals.
+- Add shell integration tests for CLI behavior.
+- Add end-to-end smoke tests for dispatcher pipelines.
+
+Useful GitHub labels:
+
+| Label | Meaning |
+| --- | --- |
+| `good first issue` | Small, beginner-friendly task |
+| `help wanted` | Maintainers want outside help |
+| `bug` | Incorrect behavior |
+| `documentation` | Docs, examples, diagrams, man pages |
+| `enhancement` | Feature or improvement request |
+| `performance` | Throughput, memory, or benchmark work |
+| `question` | Design discussion |
+
+---
+
+## 4. Architecture and Applet Responsibilities
+
+The full project flow:
+
+```text
+ESP32 / stream source
+  -> edge-ws-host or UDP demo ingestor
+  -> /tmp/stream/{session_id}/{session_id}.bin
+  -> /tmp/stream/{session_id}/{session_id}.meta.jsonl
+  -> /tmp/stream/{session_id}/.pipeline_end
+  -> pipeline_dispatcher
+       stream_merge
+         | log_parse --filter type=clip
+         | clip_store --db /tmp/clips.db
+  -> /tmp/clips.db
+```
+
+Keep each applet small and composable. Do not move policy across applet boundaries unless the design document, tests, and man pages are updated together.
+
+| Component | Responsibility | Must not do |
+| --- | --- | --- |
+| `pipeline_dispatcher` | Load config, lock a session, build and supervise the process pipeline with `pipe()`, `fork()`, `execv()`, signal handling, `waitpid()`, and exit-code propagation | Parse clip JSON, decide clip boundaries, implement storage internals, receive network packets |
+| `stream_merge` | Read `.bin` and `.meta.jsonl`, parse sidecar rows, run FSM logic, decide clip records, emit clip JSON Lines | Persist records, parse arbitrary logs, receive sockets, decode or transcode media |
+| `log_parse` | Read stdin, extract fields with POSIX extended regex, filter JSONL/records, format JSON/CSV/count output, aggregate values | Read session directories, write `clips.db`, manage child processes |
+| `clip_store` | Persist records in an append-only file-backed KV store with TTL, tombstones, query, prefix scan, file locking, compression, and compaction | Receive packets, decide clip boundaries, parse or cut media |
+| `lib/` | Shared helpers: JSONL utilities, logging, dynamic buffers, Base64, miniz export wrappers, path helpers | Applet-specific policy |
+| `scripts/example/` | Demo and contract evidence for UDP/full-run flows | Core applet behavior that tests depend on |
+| `scripts/benchmark/` | Reproducible benchmark data generation and runners | User-facing applet logic |
+
+---
+
+## 5. Behavioral Contracts
+
+### 5.1 UNIX stream discipline
+
+Every applet must be usable in a pipeline:
+
+```text
+box stream_merge <session_id> <src_dir> \
+  | box log_parse --filter type=clip \
+  | box clip_store --db /tmp/clips.db
+```
+
+Rules:
+
+- `stdout` is for structured data only.
+- `stderr` is for diagnostics, warnings, progress, and errors.
+- `--help` may print usage text to `stdout`.
+- Error messages and debug logs must never appear in pipeline data.
+- One JSONL record occupies one line.
+
+**Good:**
+
+```c
+LOG_WARN("skipping invalid metadata line: %s", line);
+```
+
+**Bad:**
+
+```c
+printf("parsed one record\n");
+```
+
+### 5.2 `pipeline_dispatcher` contract
+
+`pipeline_dispatcher` is the process lifecycle and topology manager.
+
+Behaviors to preserve:
+
+- Validate session arguments and paths before spawning children.
+- Use session-level locking to prevent duplicate pipeline execution for the same session.
+- Build the three-stage pipeline:
+
+  ```text
+  stream_merge -> log_parse -> clip_store
+  ```
+
+- Use `pipe()` for inter-applet communication.
+- Use `fork()` and `execv()` or equivalent POSIX process execution.
+- Close unused file descriptors in both parent and child.
+- Forward or handle termination signals consistently.
+- Use `waitpid()` to collect child status.
+- Return a meaningful non-zero status if any required child fails.
+
+`pipeline_dispatcher` must not parse clip payloads or make storage-specific decisions.
+
+### 5.3 `stream_merge` contract
+
+`stream_merge` is a **sidecar-driven clip indexer**. It does not inspect media codecs or decode payload bytes.
+
+Behaviors to preserve:
+
+- Parse required scalar metadata fields first: `kind`, `sequence`, `offset`, `length`, `ts_ms`.
+- Treat malformed metadata rows as recoverable: skip the row and emit diagnostics to `stderr`.
+- Use FSM logic to classify output as `complete`, `partial`, or `rejected`.
+- Detect sequence gaps, duplicate chunks, late chunks, offset discontinuity, and idle/final flush cases.
+- Prefer safe `metadata_boundary` when continuity cannot be proven.
+- Use `continuous_byte_range` only when metadata proves a continuous stream and byte-rate/frame-alignment conditions are met.
+- Preserve optional event information when supported by the documented schema.
+- Emit clip JSONL records only to `stdout`.
+
+`stream_merge` does not cut real video. It emits clip objects that identify byte ranges.
+
+### 5.4 `log_parse` contract
+
+`log_parse` is a stdin-to-stdout structured log processor.
+
+Supported behavior to preserve:
+
+| Option | Contract |
+| --- | --- |
+| `--regex <pattern>` / `-r <pattern>` | Use POSIX extended regular expressions to extract fields. |
+| `--fields <f1,f2,...>` / `-e <f1,f2,...>` | Map capture groups to field names. |
+| `--filter <expr>` / `-f <expr>` | Support `=`, `!=`, `>`, and `~` operators. |
+| `--format json` | Output JSON Lines. |
+| `--format csv` | Output CSV rows. |
+| `--format count` | Count passing records without emitting full records. |
+| `--build-full-log <path>` | Append parsed structured records to an audit JSONL file. |
+| `--sum`, `--avg`, `--min`, `--max` | Perform streaming numeric aggregation. |
+| `-E` | Accept as compatibility flag; extended regex is always used. |
+| `-h`, `--help` | Print help and exit. |
+
+`log_parse` may support both regex-extracted records and existing JSONL input, but the behavior must be documented and tested.
+
+### 5.5 `clip_store` contract
+
+`clip_store` is a lightweight append-only KV-backed record store.
+
+Supported behavior to preserve:
+
+| Option | Contract |
+| --- | --- |
+| `--db <path>` / `-d <path>` | Required DB path. |
+| default stdin ingest | Read clip JSONL from stdin and append records. |
+| `--ttl <seconds>` / `-t <seconds>` | Control record lifetime; `0` means no expiry. |
+| `--set <k=v>` | Add or update a key-value record. |
+| `--get <key>` | Return the latest live value for a key. |
+| `--list` | List all live key-value rows. |
+| `--prefix <prefix>` | List live rows whose keys start with the prefix. |
+| `--delete <key>` | Append a tombstone delete marker. |
+| `--compact` | Rewrite the DB keeping only the latest live rows. |
+| `--gc` | Alias of `--compact`. |
+| `-h`, `--help` | Print help and exit. |
+
+Storage rules:
+
+- The DB is append-only during normal writes.
+- An empty value is a tombstone.
+- Later records override earlier records for the same key.
+- Expired rows are not live.
+- Values may be compressed with Zlib/miniz and Base64-encoded when applicable.
+- Writes that may race must use file locking.
+- Compaction must use a temporary file and an atomic `rename()`.
+
+---
+
+## 6. Development Setup
+
+### Requirements
+
+Use a POSIX-like environment:
+
+- Linux, macOS, or WSL2
+- C11 compiler: `cc`, GCC, or Clang
+- GNU Make
+- POSIX shell utilities
+- Optional: `valgrind`, `clang-format`, `perf`, `jq`, `awk`, `ffmpeg`
+
+### Clone and initialize dependencies
+
+This repository uses third-party submodules including `cJSON` and `miniz`.
 
 ```bash
-# Clone the repository
 git clone <repo-url>
 cd stream-data-pipeline
+git submodule update --init --recursive
+```
 
-# Compile all applets
+If `.third-party/cJSON` or `.third-party/miniz` is empty, re-run the submodule command.
+
+### Build
+
+```bash
 make
-
-# Compile with debug symbols, no optimization (recommended for development)
-make clean
-CFLAGS="-g -O0 -Wall -Wextra" make
-
-# Compile and run tests
-make test
-
-# Run end-to-end smoke tests
-make smoke
 ```
 
-Build outputs go to `build/`.
+Build outputs are placed in `.build/`:
 
-### C Code Style
+```text
+.build/box
+.build/pipeline_dispatcher
+.build/stream_merge
+.build/log_parse
+.build/clip_store
+```
 
-#### 1. Indentation & Formatting
-- Use 4 spaces for indentation (not tabs)
-- Line length: target 100 characters, hard limit 120
-- Use auto-formatting tools like `clang-format`:
-  ```bash
-  clang-format -i applets/*.c lib/*.c
-  ```
-  Or `astyle`:
-  ```bash
-  astyle --style=bsd --indent=spaces=4 --pad-oper --pad-header applets/*.c lib/*.c
-  ```
+The project uses a BusyBox-style single binary. Applet paths in `.build/` are symlinks to `.build/box`.
 
-#### 2. Naming Conventions
-- Use `snake_case` for functions and variables: `read_metadata_sidecar`, `buffer_size`
-- Use `SCREAMING_SNAKE_CASE` for constants and macros: `MAX_BUFFER_SIZE`, `SENTINEL_MARKER`
-- Prefix internal static functions with `_`: `_parse_metadata`, `_validate_record`
-- Use meaningful names; avoid abbreviations unless universal (e.g., `ts_ms` for timestamp milliseconds)
-
-#### 3. Function Design
-- Keep functions under 100 lines where practical
-- Document public functions with comments above them:
-  ```c
-  // Reads metadata from sidecar file and populates buffer.
-  // Returns count of valid records on success, -1 on I/O error.
-  int read_metadata_sidecar(const char *path, struct metadata_buf *buf);
-  ```
-- Use `static` for file-local functions
-
-#### 4. Error Handling
-- Check **all** system call return values, never assume success
-- Use perror-style error logging to stderr
-- Use meaningful exit codes:
-  - `0` for success
-  - `1` for general errors
-  - `2` for usage errors (bad arguments)
-  - Other codes for applet-specific failures
-
-- Example:
-  ```c
-  if (read(fd, buf, n) < 0) {
-      fprintf(stderr, "error: read failed on %s: %s\n", filename, strerror(errno));
-      return -1;
-  }
-  ```
-
-#### 5. Memory Management
-- Free all allocated memory before returning from functions
-- Use `calloc()` to zero-initialize structures where appropriate
-- **Required**: Test all code with valgrind for memory leaks:
-  ```bash
-  valgrind --leak-check=full ./build/applet_name <args>
-  ```
-
-### Header Files
-
-- Keep `.h` files in the `lib/` directory
-- Use include guards:
-  ```c
-  #ifndef LIB_FOO_H
-  #define LIB_FOO_H
-  // ...
-  #endif
-  ```
-- Document public APIs
-- Avoid `#include` cycles; use forward declarations if needed
-
-### Shell Script Conventions (Tests)
-
-- Shebang: `#!/bin/sh` (POSIX, not bash)
-- Safety: `set -eu` (error on unset variables, exit on first error)
-- Cleanup trap: `trap 'rm -rf "$TMP_DIR"' EXIT`
-- Local variables lowercase, environment variables UPPERCASE
-- Quote all variable expansions: `"$var"`, not `$var`
-
-## Stream Discipline & Logging (CRITICAL)
-
-This is a **critical** part of our UNIX philosophy and **must be followed**:
-
-### stdout - Data Output Only
-- Reserved for structured output (JSON Lines format)
-- **Absolutely no** progress messages, debug info, or logs
-- One record per line, consistent format
-- Example (from `stream_merge`):
-  ```json
-  {"type":"clip","session_id":"sess_1","complete":true,"offset":0,"length":128,"ts":1000}
-  ```
-
-### stderr - Diagnostics Only
-- Reserved for diagnostic logs, warnings, and errors
-- Use `stream_logger` macros: `LOG_WARN(...)`, `LOG_ERROR(...)`
-- Include context (filename, record number, operation type)
-- Example:
-  ```c
-  LOG_WARN("skipping invalid JSON line %d: %s", line_num, line);
-  LOG_ERROR("failed to open sidecar file: %s", strerror(errno));
-  ```
-
-## Testing
-
-### Running Tests
+### Debug build
 
 ```bash
-# Run all unit and integration tests
+make clean
+CFLAGS="-std=c11 -g -O0 -Wall -Wextra -Wpedantic -D_POSIX_C_SOURCE=200809L" make
+```
+
+### Tests
+
+```bash
 make test
-
-# Run applet-specific test (replace APP)
-tests/test_APP.sh
-
-# Run end-to-end smoke tests
 make smoke
-
-# Check for memory leaks (required)
-valgrind --leak-check=full ./build/stream_merge <args>
-valgrind --leak-check=full ./build/log_parse <args>
-valgrind --leak-check=full ./build/clip_store <args>
 ```
 
-### Writing Tests
+### Benchmarks
 
-**Shell Integration Tests** (`tests/test_*.sh`):
-
-- One test file per major applet or component
-- Use `set -eu` for safety
-- Create temporary directories with `mktemp -d`, clean with trap
-- Use helper functions:
-  ```sh
-  check_eq "test name" "expected" "actual"
-  check_contains "test name" "substring" "haystack"
-  ```
-- Test normal paths, **error cases**, and **edge cases**
-- Example:
-  ```bash
-  #!/bin/sh
-  set -eu
-  TMP_DIR=$(mktemp -d)
-  trap 'rm -rf "$TMP_DIR"' EXIT
-
-  check_eq() {
-      name=$1; expected=$2; actual=$3
-      if [ "$expected" != "$actual" ]; then
-          printf 'FAIL %s\nexpected: %s\nactual:   %s\n' "$name" "$expected" "$actual" >&2; exit 1
-      fi
-  }
-
-  check_contains() {
-      name=$1; needle=$2; haystack=$3
-      case "$haystack" in
-          *"$needle"*) ;;
-          *) printf 'FAIL %s\nneedle: %s\nhaystack: %s\n' "$name" "$needle" "$haystack" >&2; exit 1 ;;
-      esac
-  }
-
-  # Normal test case
-  echo '{"id":1,"msg":"test"}' | ./build/log_parse --filter id=1 > "$TMP_DIR/out"
-  check_eq "filter id=1" '{"id":1,"msg":"test"}' "$(cat $TMP_DIR/out)"
-
-  # Error case
-  echo 'malformed' | ./build/log_parse --filter id=1 2>"$TMP_DIR/err"
-  check_contains "error message" "error" "$(cat $TMP_DIR/err)"
-  ```
-
-**C Unit Tests**:
-
-- Compile with `-g` and run under `valgrind`
-- Test helper functions in `lib/` independently
-- Example:
-  ```c
-  void test_buffer_append() {
-      struct buffer buf = {0};
-      buffer_append(&buf, "test", 4);
-      assert(buf.len == 4);
-      free(buf.data);
-  }
-  ```
-
-### Test Coverage Goals
-
-- Core logic (parsing, filtering, storage) should have >80% test coverage
-- Error paths (I/O failures, malformed input) should be explicitly tested
-- Race conditions in concurrent write scenarios should be validated
-
-### Git Commit Message Format
-
-All commits should follow this **standardized format**:
-
-```
-[action]: [description]
+```bash
+bash scripts/benchmark/run_all.sh
 ```
 
-**Action types:**
-- `init` - Project initialization
-- `feat` - New feature or applet
-- `fix` - Bug fix
-- `docs` - Documentation changes only
-- `style` - Code formatting (no logic change)
-- `refactor` - Code restructure (no feature change)
-- `test` - Test addition or fix
-- `chore` - Build system, tools, dependencies
+Benchmark scripts may depend on optional tools. If a benchmark cannot run, document the missing commands and environment in the PR.
 
-**Examples:**
+### Man pages
+
+Preview local man pages without installing:
+
+```bash
+man ./man/pipeline_dispatcher.1
+man ./man/stream_merge.1
+man ./man/log_parse.1
+man ./man/clip_store.1
 ```
-[feat]: add regex parsing to log_parse
-[fix]: handle EOF in stream_merge sidecar drain
-[docs]: update API documentation in .docs/
-[test]: add continuity break test for stream_merge
-[chore]: update Makefile to include valgrind targets
-```
-
-**Commit message tips:**
-- Use imperative mood: "add" not "added" or "adds"
-- First line under 50 characters
-- If more detail needed, blank line then detailed explanation
-- Reference related issues: "fixes #123"
-
-### Issue & Pull Request Templates
-
-When creating issues or PRs, use the provided templates. They help us understand:
-- **Issue template**: Bug reproduction steps, expected vs. actual behavior, environment details
-- **Pull request template**: What changes you made, why, what testing you did
 
 ---
 
-## 3. Development Workflow
+## 7. Code Style
 
-This section walks through the complete process from start to finish. Following this workflow ensures smooth, efficient contributions.
+### C style
 
-### Step 1: Fork the Repository
+- Use 4 spaces for indentation, not tabs.
+- Target line length: 100 characters; avoid exceeding 120 characters.
+- Use `snake_case` for functions and variables.
+- Use `SCREAMING_SNAKE_CASE` for macros and constants.
+- Mark file-local functions `static`.
+- Keep functions focused and reasonably short.
+- Prefer clear names; common abbreviations like `fd`, `len`, `ts_ms`, and `ctx` are fine.
+- Check return values from every system call and library call.
+- Free memory on every error path.
+- Keep ownership rules explicit for allocated memory.
 
-First, create your own copy of the repository:
+Example:
 
-1. Go to [stream-data-pipeline GitHub repository](https://github.com/Grasonyang/stream-data-pipeline)
-2. Click the **"Fork"** button in the top-right corner
-3. This creates a copy under your GitHub account (e.g., `your-username/stream-data-pipeline`)
+```c
+static int read_sidecar_line(FILE *fp, char *buf, size_t cap) {
+    if (fp == NULL || buf == NULL || cap == 0) {
+        return -1;
+    }
 
-**Why Fork?** Forking lets you work safely on your own repo without needing main repo permissions, and without affecting main repo development.
+    if (fgets(buf, cap, fp) == NULL) {
+        return feof(fp) ? 0 : -1;
+    }
 
-### Step 2: Clone Your Fork Locally
-
-Clone your fork to your machine and set up upstream for syncing with the main repo:
-
-```bash
-# Clone YOUR fork (not the original repository)
-git clone https://github.com/your-username/stream-data-pipeline.git
-cd stream-data-pipeline
-
-# Add the original repository as "upstream" for syncing
-git remote add upstream https://github.com/Grasonyang/stream-data-pipeline.git
-
-# Verify you have both remotes
-git remote -v
-# origin    https://github.com/your-username/stream-data-pipeline.git (fetch)
-# origin    https://github.com/your-username/stream-data-pipeline.git (push)
-# upstream  https://github.com/Grasonyang/stream-data-pipeline.git (fetch)
-# upstream  https://github.com/Grasonyang/stream-data-pipeline.git (push)
+    return 1;
+}
 ```
 
-### Step 3: Create a Feature Branch
+### Error handling
 
-Create a branch for your work. Use descriptive names:
+- Use meaningful exit codes.
+- Include context in diagnostics: file path, line number, operation, or key.
+- Never ignore results from `scanf`, `read`, `write`, `fopen`, `malloc`, `fork`, `pipe`, `exec`, or `waitpid`.
+- Use project logging helpers for applet diagnostics.
 
-```bash
-# Update main to latest first
-git fetch upstream
-git checkout main
-git merge upstream/main
+### Header files
 
-# Create your feature/fix branch
-git checkout -b feat/my-new-feature
-# Or for bug fixes:
-git checkout -b fix/issue-123
+- Public declarations belong in `.h` files.
+- Use include guards.
+- Keep headers minimal; avoid circular includes.
+- Put applet-specific headers under the applet directory.
+- Put shared library headers under `lib/`.
+
+### Shell scripts
+
+Shell tests and helper scripts should be POSIX-compatible unless Bash is explicitly documented as required.
+
+Recommended template:
+
+```sh
+#!/bin/sh
+set -eu
+
+TMP_DIR=$(mktemp -d)
+trap 'rm -rf "$TMP_DIR"' EXIT
 ```
 
-**Branch naming conventions:**
-- `feat/` - New features or applets
-- `fix/` - Bug fixes
-- `docs/` - Documentation updates
-- `test/` - Test improvements
-- `refactor/` - Code refactoring
+Rules:
 
-### Step 4: Develop & Test
+- Quote variables: `"$var"`, not `$var`.
+- Use lowercase for local shell variables; uppercase for environment variables.
+- Avoid machine-specific absolute paths except controlled fixtures under `/tmp`.
 
-Develop your feature and thoroughly test locally:
+---
+
+## 8. Testing Expectations
+
+Every behavior change must include tests.
+
+| Area | Location |
+| --- | --- |
+| Shared library helpers | `tests/lib/` |
+| Applet internal logic | `tests/applets/<applet>/` |
+| End-to-end applet behavior | `tests/test_<applet>.sh` |
+| Full dispatcher pipeline | `tests/test_pipeline_dispatcher.sh`, `make smoke` |
+
+Minimum checks before opening a PR:
 
 ```bash
-# Make your changes
-nano applets/stream_merge.c
-
-# Build (with debug flags)
-make clean
-CFLAGS="-g -O0 -Wall -Wextra" make
-
-# Run all tests (must pass)
+make clean && make
 make test
 make smoke
-
-# Check for memory leaks (required)
-valgrind --leak-check=full ./build/stream_merge ...
-valgrind --leak-check=full ./build/log_parse ...
-valgrind --leak-check=full ./build/clip_store ...
-
-# Verify code style
-clang-format --dry-run -i applets/*.c lib/*.c
 ```
 
-### Step 5: Commit Your Changes
-
-Commit with descriptive messages following our format:
+For memory-sensitive changes, also run:
 
 ```bash
-# View your changes
-git status
-git diff
-
-# Stage changes
-git add applets/stream_merge.c
-
-# Commit with [action]: [description] format
-git commit -m "[feat]: add window-size parameter to stream_merge"
-
-# View your commits
-git log --oneline -3
+valgrind --leak-check=full ./.build/stream_merge <args>
+valgrind --leak-check=full ./.build/log_parse <args>
+valgrind --leak-check=full ./.build/clip_store <args>
 ```
 
-### Step 6: Push to Your Fork
+### Cases to cover
 
-Push your branch to your GitHub fork:
+- Normal input and empty input
+- Malformed JSON Lines
+- Missing `.bin`, `.meta.jsonl`, or `.pipeline_end`
+- Sequence gaps, duplicate chunks, and late chunks
+- FSM complete, partial, and rejected actions
+- `metadata_boundary` vs `continuous_byte_range` selection
+- EOF, idle timeout, and final flush behavior
+- `log_parse` filter operators: `=`, `!=`, `>`, `~`
+- JSON, CSV, and count output formats
+- Aggregation: sum, average, min, max
+- `clip_store` TTL, tombstone delete, prefix query, and compaction
+- Concurrent writes and lock-sensitive operations where relevant
+- Bounded memory usage under large input
 
-```bash
-git push origin feat/my-new-feature
+### Test helper style
+
+```sh
+check_eq() {
+    name=$1
+    expected=$2
+    actual=$3
+    if [ "$expected" != "$actual" ]; then
+        printf 'FAIL %s\nexpected: %s\nactual:   %s\n' "$name" "$expected" "$actual" >&2
+        exit 1
+    fi
+}
 ```
 
-### Step 7: Create a Pull Request
+---
 
-1. Go to the [original repository](https://github.com/Grasonyang/stream-data-pipeline)
-2. You'll see a prompt to create a Pull Request from your fork
-3. Click **"Compare & pull request"**
-4. Fill in the PR template:
-   - **Title**: Clear summary of changes (e.g., "Add regex support to log_parse")
-   - **Description**: What and why (use template structure)
-   - **Testing**: Describe tests you ran (`make test`, `make smoke`, valgrind, etc.)
-   - **Related Issues**: Reference with `fixes #123` or `closes #456`
+## 9. Benchmark and Performance Rules
 
-5. Click **"Create pull request"**
+Benchmarks must be fair and reproducible.
 
-### Step 8: Address Code Review
+When comparing against GNU, Toybox, or other tools, classify the comparison type first:
 
-Maintainers will review your PR:
+| Type | Meaning | Acceptable claim |
+| --- | --- | --- |
+| A | CLI behavior equivalent | Direct throughput comparison |
+| B | Same problem domain, different CLI or flags | Problem-domain comparison |
+| C | Several tools composed to approximate the same behavior | Pipeline-composition comparison |
 
-- Respond to feedback promptly (usually within 24-48 hours)
-- Make requested changes on the same branch
-- Commit new changes (not forced overwrites; maintainers will squash before merge)
-- Push new commits (PR updates automatically)
+Guidelines:
+
+- Record OS, shell, CPU, compiler, optimization flags, input size, and command line.
+- Separate baseline and constrained runs when measuring embedded-like behavior.
+- If using cgroups, document memory limit, CPU quota, and allowed CPU set.
+- State clearly what is being measured: parsing, filtering, aggregation, storage ingest, compression, or IPC overhead.
+- Do not claim a specialized applet is a full replacement for general-purpose tools like `jq`, `awk`, LIVE555, GStreamer, or FFmpeg.
+- If a specialized applet wins on a narrow task, name that narrow task explicitly.
+- If a composed baseline wins on one dimension such as compression ratio, report it honestly.
+- Store raw results or scripts under `scripts/benchmark/` or `.docs/benchmark.md`.
+
+Recommended benchmark report format:
+
+```text
+Environment:
+  OS:
+  CPU:
+  Compiler:
+  CFLAGS:
+  Memory limit:
+  CPU quota:
+  Input size:
+
+Comparison type:
+  A / B / C
+
+Commands:
+  ours:
+  baseline:
+
+Results:
+  baseline mode:
+  constrained mode:
+
+Interpretation:
+  What the result proves:
+  What the result does not prove:
+```
+
+---
+
+## 10. Documentation Rules
+
+When code behavior changes, update the matching documentation.
+
+| Change type | Files to update |
+| --- | --- |
+| CLI option or usage | `README.md`, `man/*.1`, `.docs/applets/*.md` |
+| Applet behavior | `.docs/applets/<applet>.md`, tests |
+| Session artifact contract | `README.md`, `.docs/core/overview.md`, `.docs/core/compliance.md` |
+| Dispatcher lifecycle | `.docs/applets/pipeline-dispatcher.md`, tests |
+| Benchmark method or result | `.docs/benchmark.md`, `scripts/benchmark/` |
+| Build or dependency | `README.md`, `Makefile`, this contributing guide |
+| Demo script behavior | `README.md`, `scripts/example/`, related docs |
+
+Keep `README.md` high-level and user-focused. Put deeper implementation notes in `.docs/`.
+
+When updating diagrams, reports, or presentation material, use consistent terminology:
+
+```text
+pipeline_dispatcher    stream_merge         log_parse
+clip_store             .pipeline_end        metadata_boundary
+continuous_byte_range  append-only          tombstone
+compaction             clip object          session artifact
+```
+
+Avoid misspellings such as `pipline`, `CONTROBUTING`, or `.pipline_end` in committed documentation.
+
+---
+
+## 11. Git Workflow
+
+1. Fork the repository.
+2. Clone your fork.
+3. Add the upstream remote if needed: `git remote add upstream <repo-url>`.
+4. Create a focused branch from `main`.
+5. Make the change.
+6. Add or update tests.
+7. Update docs when behavior changes.
+8. Run local checks.
+9. Push the branch.
+10. Open a pull request.
+
+Suggested branch naming:
+
+```text
+feat/log-parse-aggregate
+fix/stream-merge-gap
+refactor/pipeline-dispatcher-cleanup
+docs/update-cli-contract
+test/clip-store-gc
+perf/log-parse-filter
+```
+
+Keep PRs focused. A PR that changes applet behavior, storage format, benchmark scripts, and documentation all at once is difficult to review unless those changes are tightly connected.
+
+---
+
+## 12. Commit Message Format
+
+```text
+[type]: short description
+```
+
+| Type | Use for |
+| --- | --- |
+| `init` | Project initialization |
+| `feat` | New feature |
+| `fix` | Bug fix |
+| `docs` | Documentation-only change |
+| `test` | Test addition or correction |
+| `refactor` | Code restructuring without behavior change |
+| `style` | Formatting-only change |
+| `chore` | Build, tooling, dependency, or maintenance |
+| `perf` | Performance improvement |
+
+Examples:
+
+```text
+[feat]: add ttl option to clip_store
+[fix]: handle sidecar eof in stream_merge
+[docs]: update dispatcher lifecycle contract
+[test]: add malformed jsonl filter case
+[perf]: reduce log_parse json filter allocations
+```
+
+Tips:
+
+- Use the imperative mood: `add`, not `added`.
+- Keep the first line short (under 72 characters).
+- Add a body when the change needs design context.
+- Reference related issues when available.
+
+---
+
+## 13. Pull Request Expectations
+
+A PR description should include:
+
+- What changed and why
+- How it was tested
+- Any compatibility impact
+- Benchmark impact, if performance-related
+- Related issue number, if available
+
+Reviewers will look for:
+
+- Correctness and responsibility boundaries
+- Stream discipline (`stdout`/`stderr` separation)
+- Error handling and meaningful exit codes
+- Memory ownership and leak safety
+- Test coverage for new behavior
+- Documentation updates
+- C11/POSIX compatibility
+
+Code review is not criticism. The goal is a reliable, understandable, and demonstrable project.
+
+---
+
+## 14. Issue Reports and Troubleshooting
+
+When reporting a bug, include:
+
+- Operating system and shell
+- Compiler version (`cc --version` or `gcc --version`)
+- Exact command used
+- Sample input files or minimal JSON Lines input
+- Expected output vs. actual output
+- Full `stderr` output
+- Whether the issue reproduces in `make test`, `make smoke`, or a demo script
+
+Good issue title format:
+
+```text
+[BUG] stream_merge emits duplicate clip after sequence gap
+[BUG] log_parse --filter drops valid nested field record
+[BUG] clip_store gc rewrites ttl-expired record
+```
+
+Common troubleshooting commands:
 
 ```bash
-# Make changes based on review feedback
-nano applets/stream_merge.c
+# Update submodules
+git submodule update --init --recursive
 
-# Test your changes
+# Rebuild from a clean state
+make clean && make
+
+# Run tests
 make test && make smoke
-valgrind --leak-check=full ./build/stream_merge ...
 
-# Commit and push
-git add applets/stream_merge.c
-git commit -m "[fix]: address review feedback on error handling"
-git push origin feat/my-new-feature
+# Show applet help
+./.build/log_parse --help
+./.build/clip_store --help
+./.build/stream_merge --help
 ```
 
-### Step 9: Merge & Cleanup
-
-Once approved and all tests pass:
-
-1. Maintainer will merge your PR to `main`
-2. Delete remote branch:
-   ```bash
-   git push origin --delete feat/my-new-feature
-   ```
-3. Delete local branch:
-   ```bash
-   git branch -d feat/my-new-feature
-   ```
-4. Update your local main:
-   ```bash
-   git fetch upstream
-   git checkout main
-   git merge upstream/main
-   ```
-
-### Syncing with Upstream (Keeping Your Fork Updated)
-
-If your PR takes time or you want to stay updated with the main repository:
+For merge conflicts:
 
 ```bash
-# Fetch latest from upstream
-git fetch upstream
-
-# Rebase your branch on latest upstream/main
-git rebase upstream/main feat/my-new-feature
-
-# Force push your updated branch (only to your own fork!)
-git push origin --force-with-lease feat/my-new-feature
-```
-
----
-
-## Performance Considerations
-
-- **Stream Processing**: Applets should process streaming data with constant memory (don't buffer entire input)
-- **File I/O**: Use buffered I/O; avoid byte-at-a-time reads/writes
-- **Large Files**: Use `mmap()` or sequential I/O for large `.bin` files, avoid random access
-- **Profiling**: When adding new critical paths, profile with `perf record`:
-  ```bash
-  perf record -g ./build/stream_merge ...
-  perf report
-  ```
-
----
-
-## Troubleshooting
-
-### My PR has conflicts
-```bash
-# Fetch and rebase on latest
 git fetch upstream
 git rebase upstream/main
-# Resolve conflicts in your editor (search for <<< === >>>)
+# resolve conflicts
 git add .
 git rebase --continue
-git push origin --force-with-lease feat/my-new-feature
-```
-
-### I need to undo my last commit
-```bash
-git reset --soft HEAD~1  # Undo commit, keep changes (can recommit)
-git reset --hard HEAD~1  # Undo commit and discard changes (use with caution)
-```
-
-### I want to update my fork to latest
-```bash
-git fetch upstream
-git checkout main
-git merge upstream/main
-git push origin main
-```
-
-### I accidentally committed to main instead of a feature branch
-```bash
-# Undo commit, keep changes
-git reset HEAD~1
-
-# Create new branch; commit will follow you
-git checkout -b fix/my-fix
-
-# Return to main and reset to upstream
-git checkout main
-git reset --hard upstream/main
+git push origin --force-with-lease <branch-name>
 ```
 
 ---
 
-## Code Review Expectations
+## 15. Compatibility and Current Limits
 
-When your code is reviewed, expect feedback on:
+Compatibility rules:
 
-- **Correctness**: Does it work as intended? Any logic errors?
-- **Style**: Does it follow our code style guidelines?
-- **Testing**: Is testing adequate? Does it cover edge cases?
-- **Documentation**: Are there appropriate code comments? Are README/docs updated?
-- **Performance**: Could it be more efficient? Does it introduce unnecessary memory usage?
-- **UNIX Philosophy**: Does it follow UNIX principles? Stream discipline maintained?
+- Keep the core implementation in C11 and POSIX APIs.
+- Do not require Linux-only features unless guarded or documented.
+- Keep shell tests as POSIX `sh` unless Bash is explicitly required.
+- Preserve GNU/Toybox-style CLI compatibility where the project claims it.
+- Avoid heavyweight runtime dependencies.
+- Keep memory usage bounded for streaming workloads.
 
-**Code review is not criticism** - our goal is helping you write better code and ensuring project quality.
+Current limits:
 
----
+- The project is primarily a metadata and clip-index pipeline.
+- `stream_merge` does not perform codec-aware video cutting.
+- `clips.db` stores clip records, not full media payloads.
+- Media extraction/remuxing belongs to demo scripts or future media tooling.
+- Advanced recovery for badly corrupted sessions is future work unless explicitly implemented and tested.
+- Persistent on-disk secondary indexes are future work; document any change to current behavior.
 
-## Documentation & Comments
-
-### Code Comments
-
-- Comment the **why**, not the **what**
-- Explain non-obvious design decisions
-- Keep comments concise but meaningful
-- Example:
-  ```c
-  // Continuity check: if sequence number jumps > 1, emit partial clip.
-  // (Edge devices may drop packets; we don't reconstruct, we restart.)
-  if (expected_seq != actual_seq) {
-      emit_partial_clip();
-  }
-  ```
-
-### README & Documentation
-
-- Keep `README.md` high-level and user-focused
-- Put design decisions in `.docs/`
-- Put contract specs (JSON schema, CLI args) in `.docs/core/contract.md`
-- Put applet implementation details in `.docs/applets/`
-- Update compliance matrix (`.docs/core/compliance.md`) when adding requirements
+If a new dependency or platform-specific feature is unavoidable, explain why and update build files, docs, tests, and benchmarks accordingly.
 
 ---
 
-## Reporting Issues
+## 16. Pre-Submission Checklist
 
-When reporting bugs, please provide:
+Before opening a pull request, verify:
 
-- **Reproduction steps**: How to reproduce the issue (as detailed as possible)
-- **Expected behavior**: What should happen
-- **Actual behavior**: What actually happened
-- **Sample input**: Minimal example input that causes the issue
-- **Error messages**: Full stderr output
-- **Environment**:
-  - Operating system (Linux version, macOS version, etc.)
-  - Compiler version (`gcc --version`)
-  - Build flags (what CFLAGS did you compile with)
-
-**Example issue title:**
-```
-[BUG] stream_merge crashes on empty metadata file
-[BUG] log_parse --filter type=data skips valid records
-```
+- [ ] `git submodule update --init --recursive` has been run.
+- [ ] `make clean && make` passes.
+- [ ] `make test` passes.
+- [ ] `make smoke` passes.
+- [ ] No diagnostic text is printed to `stdout`.
+- [ ] New behavior has tests.
+- [ ] Memory-sensitive changes were checked with `valgrind` or equivalent.
+- [ ] Session artifact names remain compatible (`.pipeline_end`, not `.pipline_end`).
+- [ ] CLI changes update `README.md`, `man/*.1`, and `.docs/`.
+- [ ] Benchmark claims identify comparison type A, B, or C.
+- [ ] Commit messages follow `[type]: description`.
+- [ ] The PR description explains what changed and how it was tested.
 
 ---
 
-## Questions?
+## 17. Questions and Security
 
-- **Design questions?** Open an issue with the `question` label, explain your thoughts
-- **Getting stuck?** Ask in PR or issue comments. We're happy to help!
-- **Security issues?** 🔒 Email maintainers privately, don't open public issues
-- **General feedback?** Open a discussion in GitHub Discussions
+For design questions, open an issue with enough context and a minimal example.
 
----
-
-## Pre-Submission Checklist
-
-Before submitting a PR, make sure:
-
-- [ ] Code follows style guidelines (`clang-format`)
-- [ ] All tests pass: `make test && make smoke`
-- [ ] No memory leaks: `valgrind --leak-check=full`
-- [ ] Stream discipline maintained (no logs in stdout)
-- [ ] Documentation updated (README, .docs/, comments)
-- [ ] Commit messages follow `[action]: [description]` format
-- [ ] PR template filled completely
-- [ ] Related issues referenced (if any)
+For security-sensitive reports, **do not open a public issue**. Contact the maintainers privately via email or a private GitHub security advisory.
 
 ---
 
-## Acknowledgments
+Thank you for helping improve `stream-data-pipeline`.
 
-Thank you for contributing to `stream-data-pipeline`! Whether it's code, documentation, or bug reports, your help makes the project better.
-
-**All contributors will be recognized in the project's CONTRIBUTORS.md file.**
-
----
-
-*Last updated: 2026*
+_Last updated: 2026-06_
