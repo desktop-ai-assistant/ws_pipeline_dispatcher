@@ -1,665 +1,776 @@
-# 貢獻 stream-data-pipeline
+# stream-data-pipeline 貢獻指南
 
-感謝您對 `stream-data-pipeline` 的貢獻興趣！本文件引導貢獻者了解我們的開發流程、期望和最佳實踐。
+感謝你協助改進 `stream-data-pipeline`。
 
-## 專案理念
+本專案是 **Embedded Stream Data Pipeline** 期末專題的一部分，目標是用 C 語言實作 BusyBox-style 工具集，將嵌入式裝置產生的 append-only session artifact 轉成結構化 clip metadata、可過濾的 JSON Lines，以及輕量級 file-backed clip index。
 
-在開始貢獻前，請理解 `stream-data-pipeline` 遵循的核心 UNIX 原則：
+核心流程如下：
 
-- **單一責任原則**：每個 applet（`stream_merge`、`log_parse`、`clip_store`）只有一個責任
-- **組合優於複雜性**：工具設計用於通過管道組合，而非單體架構
-- **流資料紀律**：stdout 僅傳輸結構化資料；stderr 僅寫診斷訊息
-- **最小依賴**：使用 C 語言實作，適合資源受限的嵌入式環境
-
-貢獻時，請遵守此理念。避免為 applet 添加過度功能或打破 UNIX 哲學。
-
----
-
-## 1. 我們需要什麼樣的幫忙？
-
-我們歡迎以下領域的貢獻：
-
-### 新功能與函數開發
-- 當邊界設備（ESP32）或數據源支持新功能時，開發新的函數
-- 擴展 `stream_merge`、`log_parse` 或 `clip_store` 的功能
-- 增加對新數據格式或協議的支持
-
-### 提供文件與範例程式碼
-- 改進和更新 README 和文件
-- 提供範例程式碼和使用模式
-- 修正錯字或澄清不清楚的部分
-- 擴展 `.docs/` 目錄的架構說明
-
-### 錯誤回報與修正
-- 報告您在使用工具時遇到的問題
-- 修正現有代碼中的錯誤
-- 改進錯誤處理和邊界情況覆蓋
-- 修正文件中的錯誤和不一致之處
-
-### 性能與最佳化
-- 對關鍵路徑進行性能分析和最佳化
-- 減少嵌入式環境的內存佔用
-- 改進流資料處理性能
-
-### 測試改進
-- 添加更全面的單元測試
-- 編寫複雜場景的整合測試
-- 在不同平台和邊界情況下測試
-
-### 尋找可以貢獻的 Issues
-
-我們使用 GitHub 標籤（Labels）幫助貢獻者找到合適的工作。**初次貢獻者應從這些標籤開始**：
-
-- **`good first issue`** ⭐ - 適合新貢獻者的好起點，通常工作量小、難度低
-- **`help wanted`** - 特別需要幫助的領域，優先級高
-- **`bug`** - 已知需要修復的問題
-- **`documentation`** - 需要改進的文件，無需深度技術知識
-- **`enhancement`** - 功能請求和改進
-- **`question`** - 設計問題和討論
-
-**如何找到 Issues：**
-```bash
-# 在 GitHub Issues 頁面篩選標籤
-1. 點擊「Issues」標籤
-2. 左側篩選器選擇「Labels」
-3. 選擇 "good first issue" 或 "help wanted"
-4. 閱讀 issue 描述，在評論中提問
+```text
+ESP32 / UDP-RTP-like stream / edge ingestor
+  -> session artifact on disk
+  -> pipeline_dispatcher
+  -> stream_merge | log_parse --filter type=clip | clip_store
+  -> clips.db
 ```
 
-如果不確定某個 issue，可以在評論中提問！維護者很樂意指導新貢獻者。
+在建立 issue、pull request、benchmark 結果或修改文件前，請先閱讀本指南。
 
 ---
 
-## 2. 開發規範與程式寫法
+## 目錄
 
-為了保持代碼的一致性和可維護性，請遵循以下規範。
+1. [專案理念](#1-專案理念)
+2. [專案範圍與 Session Artifact Contract](#2-專案範圍與-session-artifact-contract)
+3. [歡迎的貢獻類型](#3-歡迎的貢獻類型)
+4. [架構與 Applet 責任邊界](#4-架構與-applet-責任邊界)
+5. [行為契約](#5-行為契約)
+6. [開發環境](#6-開發環境)
+7. [程式碼風格](#7-程式碼風格)
+8. [測試要求](#8-測試要求)
+9. [Benchmark 與效能規則](#9-benchmark-與效能規則)
+10. [文件維護規則](#10-文件維護規則)
+11. [Git 工作流程](#11-git-工作流程)
+12. [Commit 訊息格式](#12-commit-訊息格式)
+13. [Pull Request 要求](#13-pull-request-要求)
+14. [Issue 回報與故障排除](#14-issue-回報與故障排除)
+15. [相容性與目前限制](#15-相容性與目前限制)
+16. [提交前檢查清單](#16-提交前檢查清單)
+17. [問題與資安回報](#17-問題與資安回報)
 
-### 開發環境設置
+---
 
-#### 前置需求
+## 1. 專案理念
 
-- **C 編譯器**：GCC 或 Clang（C11 或更新版本）
-- **POSIX 環境**：Linux、macOS 或 WSL2
-- **構建工具**：GNU Make、標準 POSIX 工具（sh、grep、tail）
-- **選配**：`valgrind` 用於內存洩漏檢測、`clang-format` 用於代碼格式化
+`stream-data-pipeline` 遵循 UNIX 系統程式設計精神：
 
-#### 編譯與構建
+- **單一責任** — 每個 applet 只做一件清楚的事情。
+- **組合優於單體** — 工具透過 pipe 串接，而不是合併成一個巨大程式。
+- **Stream discipline** — `stdout` 只輸出資料；`stderr` 只輸出診斷訊息。
+- **File-backed contract** — session data 透過 append-only 檔案與 metadata sidecar 交換。
+- **最小依賴** — 核心以 C11/POSIX 為主，適合資源受限的 embedded Linux-like 環境。
+- **可觀察行為** — CLI 行為、exit code、測試與文件都應讓變更容易驗證。
+
+不要加入會讓某個 applet 承擔其他 applet 責任的功能。若不確定，請優先維持 pipeline 小型、明確、容易測試。
+
+---
+
+## 2. 專案範圍與 Session Artifact Contract
+
+本 repository 是**下游 UNIX pipeline 層**。它不是 WebSocket server、UDP/RTP packet receiver、ESP32 parser，也不是影音轉檔器。
+
+上層系統（例如 `edge-ws-host` 或 UDP demo server）負責接收封包並將 session artifact 寫到磁碟。本 repository 的工作從 session artifact 已存在後開始。
+
+預期 session layout：
+
+```text
+/tmp/stream/{session_id}/
+  {session_id}.bin
+  {session_id}.meta.jsonl
+  .pipeline_end
+```
+
+Artifact contract：
+
+| 檔案 | 意義 | 貢獻規則 |
+| --- | --- | --- |
+| `{session_id}.bin` | 整個 session 的 append-only binary payload buffer | ingestion 過程中不要重寫前面已寫入的 bytes。 |
+| `{session_id}.meta.jsonl` | 包含 sequence、offset、length、timestamp、optional events 的 sidecar metadata index | clip boundary 應以 metadata 為主要依據。 |
+| `.pipeline_end` | 表示 session 已完成的 sentinel 檔 | 使用此**精確拼法**，不要引入 `.pipline_end` 或其他變體。 |
+
+重要假設：
+
+- 資料可能來自 UDP/RTP-like transport，因此 chunk loss、gap、duplicate、late arrival 都可能發生。
+- `.bin` 存的是實際 append 的 raw bytes，不是索引。
+- `.meta.jsonl` 是 byte-range index，讓 pipeline 決定 `.bin` 的哪一段屬於哪個 clip。
+- clip index 不等於實體影片檔。`clips.db` 儲存 clip records；extract/remux 屬於 demo script 或未來 media tooling 的責任。
+
+---
+
+## 3. 歡迎的貢獻類型
+
+### 功能與 applet 改進
+
+- 在維持責任邊界的前提下，改進 `pipeline_dispatcher`、`stream_merge`、`log_parse` 或 `clip_store`。
+- 新增範圍清楚的 CLI option，並同步補測試與 man page。
+- 改善邊界情況：malformed metadata、EOF handling、gap handling、TTL behavior、compaction safety。
+
+### 文件與範例
+
+- 改進 `README.md`、`man/*.1`、`.docs/` 與 example scripts。
+- 補充架構說明、sequence diagram 或 demo 操作方式。
+- 修正 code、documentation、benchmark notes 與簡報素材之間的術語不一致。
+
+### Bug 與可靠性
+
+- 修正 parsing、filtering、process lifecycle、file-locking 或 storage 相關 bug。
+- 改善 diagnostics，但不能污染 `stdout`。
+- 為曾經壞掉的行為加入 regression tests。
+
+### 效能與 embedded constraints
+
+- 降低記憶體使用量與不必要的 allocation。
+- 改善 streaming throughput。
+- 提升 benchmark 可重現性。
+- 與 GNU/Toybox-style tools 比較時，使用正確 benchmark 分類，並公平呈現結果。
+
+### 測試
+
+- 為 `lib/` 與 applet internals 補 unit tests。
+- 為 CLI 行為補 shell integration tests。
+- 為 dispatcher pipeline 補 end-to-end smoke tests。
+
+常見 GitHub labels：
+
+| Label | 意義 |
+| --- | --- |
+| `good first issue` | 適合初次貢獻者的小任務 |
+| `help wanted` | Maintainer 希望外部協助 |
+| `bug` | 錯誤行為 |
+| `documentation` | 文件、範例、圖表、man pages |
+| `enhancement` | 功能或改進需求 |
+| `performance` | throughput、memory 或 benchmark 相關工作 |
+| `question` | 設計討論 |
+
+---
+
+## 4. 架構與 Applet 責任邊界
+
+完整流程如下：
+
+```text
+ESP32 / stream source
+  -> edge-ws-host or UDP demo ingestor
+  -> /tmp/stream/{session_id}/{session_id}.bin
+  -> /tmp/stream/{session_id}/{session_id}.meta.jsonl
+  -> /tmp/stream/{session_id}/.pipeline_end
+  -> pipeline_dispatcher
+       stream_merge
+         | log_parse --filter type=clip
+         | clip_store --db /tmp/clips.db
+  -> /tmp/clips.db
+```
+
+每個 applet 都應保持小型、可組合。除非同步更新設計文件、測試與 man pages，否則不要把 policy 搬到不該負責的 applet。
+
+| Component | 負責事項 | 不應負責 |
+| --- | --- | --- |
+| `pipeline_dispatcher` | 讀取 config、session lock、用 `pipe()`、`fork()`、`execv()`、signal handling、`waitpid()` 建立並監督 process pipeline，以及傳遞 exit code | 解析 clip JSON、決定 clip boundary、實作 storage internals、接收 network packets |
+| `stream_merge` | 讀取 `.bin` 與 `.meta.jsonl`，解析 sidecar rows，執行 FSM，決定 clip records，輸出 clip JSON Lines | 永久儲存 records、解析任意 log、接 socket、decode 或 transcode media |
+| `log_parse` | 從 stdin 讀資料，以 POSIX extended regex 擷取欄位，過濾 JSONL/records，輸出 JSON/CSV/count，並做聚合統計 | 直接讀 session directory、寫入 `clips.db`、管理 child processes |
+| `clip_store` | 以 append-only file-backed KV store 持久化資料，支援 TTL、tombstone、query、prefix scan、file locking、compression、compaction | 接收 packets、決定 clip boundaries、解析或切影片 |
+| `lib/` | 共用 helper：JSONL utilities、logging、dynamic buffers、Base64、miniz export wrappers、path helpers | 特定 applet 的政策邏輯 |
+| `scripts/example/` | 提供 UDP/full-run flow 的 demo 與 contract evidence | 測試應依賴的核心 applet 行為 |
+| `scripts/benchmark/` | 可重現 benchmark data generation 與 benchmark runners | 使用者面向的 applet logic |
+
+---
+
+## 5. 行為契約
+
+### 5.1 UNIX stream discipline
+
+每個 applet 都必須可以被 pipe 串接：
+
+```text
+box stream_merge <session_id> <src_dir> \
+  | box log_parse --filter type=clip \
+  | box clip_store --db /tmp/clips.db
+```
+
+規則：
+
+- `stdout` 只放結構化資料。
+- `stderr` 放 diagnostic、warning、progress message、error。
+- `--help` 可以把 usage text 印到 `stdout`。
+- 錯誤訊息與 debug log 不可以混進 pipeline data。
+- 一筆 JSONL record 應占一行。
+
+**好的寫法：**
+
+```c
+LOG_WARN("skipping invalid metadata line: %s", line);
+```
+
+**不好的寫法：**
+
+```c
+printf("parsed one record\n");
+```
+
+### 5.2 `pipeline_dispatcher` 行為契約
+
+`pipeline_dispatcher` 是 process lifecycle 與 topology manager。
+
+需要維持的行為：
+
+- spawn child processes 前先驗證 session arguments 與 paths。
+- 使用 session-level locking，避免同一個 session 重複啟動 pipeline。
+- 建立以下三段 pipeline：
+
+  ```text
+  stream_merge -> log_parse -> clip_store
+  ```
+
+- 使用 `pipe()` 連接 applet 間的資料流。
+- 使用 `fork()` 與 `execv()` 或等價 POSIX process execution。
+- parent 與 child process 都要關閉不需要的 file descriptors。
+- 一致地處理或轉送 termination signals。
+- 使用 `waitpid()` 回收 child 狀態。
+- 任何必要 child 失敗時，應回傳有意義的 non-zero status。
+
+`pipeline_dispatcher` 不應解析 clip payload，也不應決定 storage-specific policy。
+
+### 5.3 `stream_merge` 行為契約
+
+`stream_merge` 是 **sidecar-driven clip indexer**。它不應解析 media codec，也不應 decode payload bytes。
+
+需要維持的行為：
+
+- 優先解析必要 scalar metadata fields：`kind`、`sequence`、`offset`、`length`、`ts_ms`。
+- 遇到 malformed metadata row 時，在可恢復的情況下略過該 row，並把診斷訊息輸出到 `stderr`。
+- 透過 FSM 將輸出分類為 `complete`、`partial`、`rejected`。
+- 偵測 sequence gap、duplicate chunk、late chunk、offset discontinuity、idle/final flush cases。
+- 無法證明連續性時，優先使用較安全的 `metadata_boundary`。
+- 只有在 metadata 能證明連續性，且 byte-rate/frame-alignment 條件符合時，才使用 `continuous_byte_range`。
+- 若 schema 支援 optional event information，應保留該資訊。
+- clip JSONL records 只能輸出到 `stdout`。
+
+`stream_merge` 不負責真正切影片。它輸出的是描述 byte ranges 的 clip objects。
+
+### 5.4 `log_parse` 行為契約
+
+`log_parse` 是 stdin-to-stdout 的結構化日誌處理器。
+
+需要維持的功能：
+
+| Option | Contract |
+| --- | --- |
+| `--regex <pattern>` / `-r <pattern>` | 使用 POSIX extended regular expressions 擷取欄位。 |
+| `--fields <f1,f2,...>` / `-e <f1,f2,...>` | 將 capture groups 對應到欄位名稱。 |
+| `--filter <expr>` / `-f <expr>` | 支援 `=`、`!=`、`>`、`~` 四種運算子。 |
+| `--format json` | 輸出 JSON Lines。 |
+| `--format csv` | 輸出 CSV rows。 |
+| `--format count` | 只計算通過 filter 的 records，不輸出完整 records。 |
+| `--build-full-log <path>` | 將 parsed structured records append 到 audit JSONL 檔。 |
+| `--sum`、`--avg`、`--min`、`--max` | 執行 streaming numeric aggregation。 |
+| `-E` | 接受 compatibility flag；程式永遠使用 extended regex。 |
+| `-h`、`--help` | 顯示 help 並退出。 |
+
+`log_parse` 可支援 regex-extracted records 與既有 JSONL input，但行為必須寫入文件並有測試覆蓋。
+
+### 5.5 `clip_store` 行為契約
+
+`clip_store` 是輕量級 append-only KV-backed record store。
+
+需要維持的功能：
+
+| Option | Contract |
+| --- | --- |
+| `--db <path>` / `-d <path>` | 必填 DB path。 |
+| default stdin ingest | 從 stdin 讀取 clip JSONL 並 append records。 |
+| `--ttl <seconds>` / `-t <seconds>` | 控制 record lifetime；`0` 代表不過期。 |
+| `--set <k=v>` | 新增或更新 key-value record。 |
+| `--get <key>` | 回傳指定 key 的最新 live value。 |
+| `--list` | 列出所有 live key-value rows。 |
+| `--prefix <prefix>` | 列出 key 以 prefix 開頭的 live rows。 |
+| `--delete <key>` | append tombstone delete marker。 |
+| `--compact` | 重寫 DB，只保留最新 live rows。 |
+| `--gc` | `--compact` 的 alias。 |
+| `-h`、`--help` | 顯示 help 並退出。 |
+
+Storage rules：
+
+- 一般寫入時 DB 採 append-only。
+- 空字串 value 代表 tombstone。
+- 同一個 key 後寫覆蓋先寫。
+- expired rows 不算 live。
+- 適用時 value 可用 Zlib/miniz 壓縮並以 Base64 編碼。
+- 可能發生競爭的寫入必須使用 file locking。
+- compaction 必須透過 temporary file 加 atomic `rename()` 完成。
+
+---
+
+## 6. 開發環境
+
+### 需求
+
+請使用 POSIX-like 環境：
+
+- Linux、macOS 或 WSL2
+- C11 compiler：`cc`、GCC 或 Clang
+- GNU Make
+- POSIX shell utilities
+- Optional：`valgrind`、`clang-format`、`perf`、`jq`、`awk`、`ffmpeg`
+
+### Clone 與初始化 dependencies
+
+本 repository 使用 `cJSON`、`miniz` 等 third-party submodules。
 
 ```bash
-# 克隆倉庫
 git clone <repo-url>
 cd stream-data-pipeline
+git submodule update --init --recursive
+```
 
-# 編譯所有 applet
+如果 `.third-party/cJSON` 或 `.third-party/miniz` 是空的，請再次執行 submodule 指令。
+
+### Build
+
+```bash
 make
-
-# 使用調試符號編譯，無最佳化（建議開發時使用）
-make clean
-CFLAGS="-g -O0 -Wall -Wextra" make
-
-# 編譯並執行測試
-make test
-
-# 執行端對端煙霧測試
-make smoke
 ```
 
-構建系統會輸出二進制檔案至 `build/`。
+Build outputs 會放在 `.build/`：
 
-### C 代碼風格
+```text
+.build/box
+.build/pipeline_dispatcher
+.build/stream_merge
+.build/log_parse
+.build/clip_store
+```
 
-#### 1. 縮進與格式化
-- 使用 4 個空格縮進（不是製表符）
-- 行長度：目標 100 個字符，硬性限制 120
-- 如需自動格式化，使用 `clang-format`：
-  ```bash
-  clang-format -i applets/*.c lib/*.c
-  ```
-  或使用 `astyle`：
-  ```bash
-  astyle --style=bsd --indent=spaces=4 --pad-oper --pad-header applets/*.c lib/*.c
-  ```
+本專案採 BusyBox-style single binary。`.build/` 裡的 applet paths 是指向 `.build/box` 的 symlinks。
 
-#### 2. 命名規則
-- 函數和變量使用 `snake_case`：`read_metadata_sidecar`、`buffer_size`
-- 常數和宏使用 `SCREAMING_SNAKE_CASE`：`MAX_BUFFER_SIZE`、`SENTINEL_MARKER`
-- 內部靜態函數以 `_` 開頭：`_parse_metadata`、`_validate_record`
-- 使用有意義的名稱；避免縮寫，除非通用（例：`ts_ms` 表示時間戳毫秒）
-
-#### 3. 函數設計
-- 函數長度控制在 100 行以內為佳
-- 用註解記錄公開函數（放在函數上方）：
-  ```c
-  // 從 sidecar 檔案讀取元數據並填充緩衝區。
-  // 成功時回傳有效記錄數，I/O 錯誤時回傳 -1。
-  int read_metadata_sidecar(const char *path, struct metadata_buf *buf);
-  ```
-- 對文件本地函數使用 `static`
-
-#### 4. 錯誤處理
-- 檢查**所有**系統調用的返回值，不要假設成功
-- 對錯誤使用 perror 風格的日誌輸出到 stderr
-- 使用有意義的退出代碼：
-  - `0` 成功
-  - `1` 一般錯誤
-  - `2` 使用錯誤（參數錯誤）
-  - 其他代碼表示 applet 特定故障
-
-- 範例：
-  ```c
-  if (read(fd, buf, n) < 0) {
-      fprintf(stderr, "error: read failed on %s: %s\n", filename, strerror(errno));
-      return -1;
-  }
-  ```
-
-#### 5. 內存管理
-- 從函數返回前釋放所有分配的內存
-- 必要時使用 `calloc()` 進行零初始化結構
-- **強制要求**：使用 valgrind 測試所有代碼，檢查內存洩漏：
-  ```bash
-  valgrind --leak-check=full ./build/applet_name <args>
-  ```
-
-### 頭文件（Header）規範
-
-- 將 `.h` 檔案放在 `lib/` 目錄中
-- 包含保護：
-  ```c
-  #ifndef LIB_FOO_H
-  #define LIB_FOO_H
-  // ...
-  #endif
-  ```
-- 記錄公開 API
-- 避免 `#include` 循環；必要時使用前向聲明
-
-### 殼層腳本規範（測試）
-
-- Shebang：`#!/bin/sh`（POSIX，非 bash）
-- 安全設置：`set -eu`（未設定變量時錯誤，首次錯誤時退出）
-- 陷阱清理：`trap 'rm -rf "$TMP_DIR"' EXIT`
-- 本地變量使用小寫，環境變量使用大寫
-- 引用所有變量擴展：`"$var"`，不是 `$var`
-
-## 流資料紀律與日誌（CRITICAL）
-
-這是我們遵循的 UNIX 哲學的**關鍵**部分，**必須遵守**：
-
-### stdout - 僅用於資料輸出
-- 專用於結構化輸出（JSON Lines 格式）
-- **絕對不允許**進度訊息、調試信息或日誌
-- 每行一筆記錄，格式一致
-- 例子（來自 `stream_merge`）：
-  ```json
-  {"type":"clip","session_id":"sess_1","complete":true,"offset":0,"length":128,"ts":1000}
-  ```
-
-### stderr - 僅用於診斷
-- 專用於診斷日誌、警告和錯誤
-- 使用 `stream_logger` 巨集：`LOG_WARN(...)`、`LOG_ERROR(...)`
-- 包含上下文（例：檔案名、記錄號、操作類型）
-- 例子：
-  ```c
-  LOG_WARN("skipping invalid JSON line %d: %s", line_num, line);
-  LOG_ERROR("failed to open sidecar file: %s", strerror(errno));
-  ```
-
-## 測試
-
-### 執行測試
+### Debug build
 
 ```bash
-# 執行所有單元和整合測試
+make clean
+CFLAGS="-std=c11 -g -O0 -Wall -Wextra -Wpedantic -D_POSIX_C_SOURCE=200809L" make
+```
+
+### Tests
+
+```bash
 make test
-
-# 僅執行特定 applet 測試（替換 APP）
-tests/test_APP.sh
-
-# 執行端對端煙霧測試
 make smoke
-
-# 檢查內存洩漏（必須做）
-valgrind --leak-check=full ./build/stream_merge <args>
-valgrind --leak-check=full ./build/log_parse <args>
-valgrind --leak-check=full ./build/clip_store <args>
 ```
 
-### 編寫測試
+### Benchmarks
 
-**殼層整合測試** (`tests/test_*.sh`)：
-
-- 每個主要 applet 或元件一個測試檔案
-- 使用 `set -eu` 確保安全
-- 用 `mktemp -d` 建立臨時目錄，用 trap 清理
-- 使用助手函數：
-  ```sh
-  check_eq "測試名稱" "預期" "實際"
-  check_contains "測試名稱" "子字符串" "搜尋對象"
-  ```
-- 測試正常路徑、**錯誤情況**和**邊界情況**
-- 範例：
-  ```bash
-  #!/bin/sh
-  set -eu
-  TMP_DIR=$(mktemp -d)
-  trap 'rm -rf "$TMP_DIR"' EXIT
-
-  check_eq() {
-      name=$1; expected=$2; actual=$3
-      if [ "$expected" != "$actual" ]; then
-          printf 'FAIL %s\nexpected: %s\nactual:   %s\n' "$name" "$expected" "$actual" >&2; exit 1
-      fi
-  }
-
-  check_contains() {
-      name=$1; needle=$2; haystack=$3
-      case "$haystack" in
-          *"$needle"*) ;;
-          *) printf 'FAIL %s\nneedle: %s\nhaystack: %s\n' "$name" "$needle" "$haystack" >&2; exit 1 ;;
-      esac
-  }
-
-  # 正常測試案例
-  echo '{"id":1,"msg":"test"}' | ./build/log_parse --filter id=1 > "$TMP_DIR/out"
-  check_eq "filter id=1" '{"id":1,"msg":"test"}' "$(cat $TMP_DIR/out)"
-
-  # 錯誤情況測試
-  echo 'malformed' | ./build/log_parse --filter id=1 2>"$TMP_DIR/err"
-  check_contains "error message" "error" "$(cat $TMP_DIR/err)"
-  ```
-
-**C 單元測試**：
-
-- 使用 `-g` 編譯並在 `valgrind` 下運行
-- 獨立測試 `lib/` 中的助手函數
-- 範例：
-  ```c
-  void test_buffer_append() {
-      struct buffer buf = {0};
-      buffer_append(&buf, "test", 4);
-      assert(buf.len == 4);
-      free(buf.data);
-  }
-  ```
-
-### 測試覆蓋率目標
-
-- 核心邏輯（解析、過濾、儲存）應有 >80% 的測試覆蓋率
-- 錯誤路徑（I/O 故障、格式錯誤的輸入）應明確測試
-- 並發寫入情況中的競賽條件應被驗證
-
-### Git 提交訊息格式
-
-所有提交都應遵循此**標準化格式**：
-
-```
-[action]: [description]
+```bash
+bash scripts/benchmark/run_all.sh
 ```
 
-**行動類型：**
-- `init` - 專案初始化
-- `feat` - 新功能或 applet
-- `fix` - 錯誤修復
-- `docs` - 僅文件更改
-- `style` - 代碼格式化（無邏輯更改）
-- `refactor` - 代碼重構（無功能更改）
-- `test` - 測試添加或修復
-- `chore` - 構建系統、工具、依賴
+Benchmark scripts 可能依賴 optional tools。若 benchmark 無法執行，請在 PR 中說明缺少的 command 與環境。
 
-**範例：**
+### Man pages
+
+不安裝也可以預覽 local man pages：
+
+```bash
+man ./man/pipeline_dispatcher.1
+man ./man/stream_merge.1
+man ./man/log_parse.1
+man ./man/clip_store.1
 ```
-[feat]: add regex parsing to log_parse
-[fix]: handle EOF in stream_merge sidecar drain
-[docs]: update API documentation in .docs/
-[test]: add continuity break test for stream_merge
-[chore]: update Makefile to include valgrind targets
-```
-
-### Issue 與 Pull Request 模板
-
-建立 issue 或 pull request 時，請使用提供的模板。它們幫助我們理解：
-- **Issue 模板**：錯誤複現步驟、預期與實際行為、環境細節
-- **Pull Request 模板**：您做了什麼更改、為什麼、做了什麼測試
 
 ---
 
-## 3. 實際開發流程
+## 7. 程式碼風格
 
-本節完整說明從開始到完成的流程。遵循此流程確保貢獻流暢高效。
+### C style
 
-### 第 1 步：Fork 倉庫
+- 使用 4 spaces 縮排，不使用 tabs。
+- 行長目標 100 characters，盡量不要超過 120 characters。
+- 函數與變數使用 `snake_case`。
+- Macro 與常數使用 `SCREAMING_SNAKE_CASE`。
+- File-local functions 使用 `static`。
+- 函數應保持專注且不要過長。
+- 優先使用清楚命名，除非是常見縮寫，例如 `fd`、`len`、`ts_ms`、`ctx`。
+- 檢查 system calls 與 library calls 的 return values。
+- 每條 error path 都要正確釋放記憶體。
+- allocated memory 的 ownership rules 要清楚。
 
-首先，為自己建立倉庫的副本：
+範例：
 
-1. 前往 [stream-data-pipeline GitHub 倉庫](https://github.com/Grasonyang/stream-data-pipeline)
-2. 點擊右上角的 **"Fork"** 按鈕
-3. 這會在您的 GitHub 帳戶下建立一個副本（例：`your-username/stream-data-pipeline`）
+```c
+static int read_sidecar_line(FILE *fp, char *buf, size_t cap) {
+    if (fp == NULL || buf == NULL || cap == 0) {
+        return -1;
+    }
 
-**為什麼 Fork？** Fork 讓您在自己的倉庫中安全地工作，無需主倉庫的權限，也不會影響主倉庫的開發。
+    if (fgets(buf, cap, fp) == NULL) {
+        return feof(fp) ? 0 : -1;
+    }
 
-### 第 2 步：克隆 Fork 到本地
-
-克隆 fork 的倉庫到您的計算機，並設置 upstream 以保持與主倉庫同步：
-
-```bash
-# 克隆您的 fork（不是原始倉庫）
-git clone https://github.com/your-username/stream-data-pipeline.git
-cd stream-data-pipeline
-
-# 將原始倉庫添加為 "upstream" 以進行同步
-git remote add upstream https://github.com/Grasonyang/stream-data-pipeline.git
-
-# 驗證您有兩個遠端
-git remote -v
-# origin    https://github.com/your-username/stream-data-pipeline.git (fetch)
-# origin    https://github.com/your-username/stream-data-pipeline.git (push)
-# upstream  https://github.com/Grasonyang/stream-data-pipeline.git (fetch)
-# upstream  https://github.com/Grasonyang/stream-data-pipeline.git (push)
+    return 1;
+}
 ```
 
-### 第 3 步：建立功能分支
+### Error handling
 
-為您的工作建立一個分支。使用有描述性的名稱：
+- 使用有意義的 exit codes。
+- Diagnostics 應包含 context，例如 file path、line number、operation 或 key。
+- 不要忽略 `scanf`、`read`、`write`、`fopen`、`malloc`、`fork`、`pipe`、`exec`、`waitpid` 的結果。
+- applet diagnostics 優先使用專案 logging helpers。
 
-```bash
-# 先更新 main 到最新
-git fetch upstream
-git checkout main
-git merge upstream/main
+### Header files
 
-# 建立您的功能/修復分支
-git checkout -b feat/my-new-feature
-# 或針對錯誤修復：
-git checkout -b fix/issue-123
+- Public declarations 放在 `.h` files。
+- 使用 include guards。
+- Headers 應保持最小化，避免 circular includes。
+- Applet-specific headers 放在 applet directory。
+- Shared library headers 放在 `lib/`。
+
+### Shell scripts
+
+Shell tests 與 helper scripts 應保持 POSIX-compatible，除非明確標示需要 Bash。
+
+建議格式：
+
+```sh
+#!/bin/sh
+set -eu
+
+TMP_DIR=$(mktemp -d)
+trap 'rm -rf "$TMP_DIR"' EXIT
 ```
 
-**分支命名規則：**
-- `feat/` - 新功能或 applet
-- `fix/` - 錯誤修復
-- `docs/` - 文件更新
-- `test/` - 測試改進
-- `refactor/` - 代碼重構
+規則：
 
-### 第 4 步：開發與測試
+- 變數要加引號：`"$var"`，不要寫 `$var`。
+- Local shell variables 使用 lowercase；Environment variables 使用 uppercase。
+- 除 `/tmp` 下的 controlled fixtures 外，避免 machine-specific absolute paths。
 
-開發您的功能並在本地進行**完整測試**：
+---
+
+## 8. 測試要求
+
+每個行為變更都應該補測試。
+
+| Area | Test location |
+| --- | --- |
+| Shared library helpers | `tests/lib/` |
+| Applet internal logic | `tests/applets/<applet>/` |
+| End-to-end applet behavior | `tests/test_<applet>.sh` |
+| Full dispatcher pipeline | `tests/test_pipeline_dispatcher.sh`、`make smoke` |
+
+PR 前最低限度請執行：
 
 ```bash
-# 進行您的更改
-nano applets/stream_merge.c
-
-# 構建（使用調試標誌）
-make clean
-CFLAGS="-g -O0 -Wall -Wextra" make
-
-# 執行所有測試（必須通過）
+make clean && make
 make test
 make smoke
-
-# 檢查內存洩漏（必須執行）
-valgrind --leak-check=full ./build/stream_merge ...
-valgrind --leak-check=full ./build/log_parse ...
-valgrind --leak-check=full ./build/clip_store ...
-
-# 驗證代碼風格
-clang-format --dry-run -i applets/*.c lib/*.c
 ```
 
-### 第 5 步：提交您的更改
-
-遵循我們的提交格式提交具有描述性的訊息：
+Memory-sensitive changes 也建議執行：
 
 ```bash
-# 查看您做了哪些更改
-git status
-git diff
-
-# 暫存更改
-git add applets/stream_merge.c
-
-# 按照 [action]: [description] 格式提交
-git commit -m "[feat]: add window-size parameter to stream_merge"
-
-# 查看您的提交
-git log --oneline -3
+valgrind --leak-check=full ./.build/stream_merge <args>
+valgrind --leak-check=full ./.build/log_parse <args>
+valgrind --leak-check=full ./.build/clip_store <args>
 ```
 
-**提交訊息撰寫建議：**
-- 使用命令式語氣：「add」而非「added」或「adds」
-- 第一行不超過 50 字符
-- 如需更多說明，空一行後詳細描述
-- 引用相關 issue：「fixes #123」
+### 建議覆蓋案例
 
-### 第 6 步：推送到您的 Fork
+- 正常輸入與空輸入
+- Malformed JSON Lines
+- 缺少 `.bin`、`.meta.jsonl` 或 `.pipeline_end`
+- Sequence gaps、duplicate chunks、late chunks
+- FSM complete、partial、reject actions
+- `metadata_boundary` 與 `continuous_byte_range` selection
+- EOF、idle timeout、final flush behavior
+- `log_parse` filter operators：`=`、`!=`、`>`、`~`
+- JSON、CSV、count output formats
+- Aggregation：sum、average、min、max
+- `clip_store` TTL、tombstone delete、prefix query、compaction
+- Concurrent writes 或 lock-sensitive operations（相關時）
+- 大量輸入時 memory usage 應維持 bounded
 
-推送您的分支到 GitHub fork：
+### Test helper style
 
-```bash
-git push origin feat/my-new-feature
+```sh
+check_eq() {
+    name=$1
+    expected=$2
+    actual=$3
+    if [ "$expected" != "$actual" ]; then
+        printf 'FAIL %s\nexpected: %s\nactual:   %s\n' "$name" "$expected" "$actual" >&2
+        exit 1
+    fi
+}
 ```
 
-### 第 7 步：建立 Pull Request
+---
 
-1. 前往 [原始倉庫](https://github.com/Grasonyang/stream-data-pipeline)
-2. 您將看到從您的 fork 建立 Pull Request 的提示
-3. 點擊 **"Compare & pull request"**
-4. 填寫 PR 模板：
-   - **標題**：清晰的更改摘要（例：「Add regex support to log_parse」）
-   - **描述**：做了什麼和為什麼（使用模板提供的結構）
-   - **測試**：描述您執行的測試（`make test`、`make smoke`、valgrind 等）
-   - **相關 Issues**：用 `fixes #123` 或 `closes #456` 參考任何 issues
+## 9. Benchmark 與效能規則
 
-5. 點擊 **"Create pull request"**
+Benchmark 必須公平且可重現。
 
-### 第 8 步：應對代碼審查
+與 GNU、Toybox 或其他 tools 比較時，請先分類比較類型：
 
-維護者將審查您的 PR：
+| Type | Meaning | Acceptable claim |
+| --- | --- | --- |
+| A | CLI behavior equivalent | 可直接比較 throughput |
+| B | Same problem domain，但 CLI 或 flags 不同 | 可做問題域比較 |
+| C | 用多個 tools 組合出近似行為 | 可做 pipeline-composition comparison |
 
-- 及時回應反饋（通常 24-48 小時內）
-- 在同一分支上進行要求的更改
-- 提交新的 commit 而非強制覆蓋（maintainer 會在合併前 squash）
-- 推送新提交（PR 將自動更新，無需關閉和重新開啟）
+Guidelines：
+
+- 記錄 OS、shell、CPU、compiler、optimization flags、input size、command line。
+- 測 embedded-like behavior 時，分開 baseline 與 constrained runs。
+- 若使用 cgroups，請記錄 memory limit、CPU quota、allowed CPU set 等設定。
+- 說清楚正在量測的是 parsing、filtering、aggregation、storage ingest、compression 還是 IPC overhead。
+- 不要宣稱專用 applet 可以完整取代 `jq`、`awk`、LIVE555、GStreamer 或 FFmpeg 這類通用工具。
+- 若專用 applet 在單一任務勝出，請明確寫出勝出的是哪個狹窄任務。
+- 若組合 baseline 在某些面向勝出（例如 compression ratio），也要如實呈現。
+- Raw results 或 scripts 應放在 `scripts/benchmark/` 或 `.docs/benchmark.md`。
+
+建議 benchmark report 格式：
+
+```text
+Environment:
+  OS:
+  CPU:
+  Compiler:
+  CFLAGS:
+  Memory limit:
+  CPU quota:
+  Input size:
+
+Comparison type:
+  A / B / C
+
+Commands:
+  ours:
+  baseline:
+
+Results:
+  baseline mode:
+  constrained mode:
+
+Interpretation:
+  What the result proves:
+  What the result does not prove:
+```
+
+---
+
+## 10. 文件維護規則
+
+當 code behavior 改變時，請同步更新對應文件。
+
+| Change type | Files to check |
+| --- | --- |
+| CLI option 或 usage | `README.md`、`man/*.1`、`.docs/applets/*.md` |
+| Applet behavior | `.docs/applets/<applet>.md`、tests |
+| Session artifact contract | `README.md`、`.docs/core/overview.md`、`.docs/core/compliance.md` |
+| Dispatcher lifecycle 或 process behavior | `.docs/applets/pipeline-dispatcher.md`、tests |
+| Benchmark method 或 result | `.docs/benchmark.md`、`scripts/benchmark/` |
+| Build 或 dependency change | `README.md`、`Makefile`、本 contributing guide |
+| Demo script behavior | `README.md`、`scripts/example/`、相關 docs |
+
+`README.md` 應保持 high-level 且 user-focused。更深入的 implementation notes 請放到 `.docs/`。
+
+更新 diagrams、reports 或簡報素材時，請保持術語一致：
+
+```text
+pipeline_dispatcher    stream_merge         log_parse
+clip_store             .pipeline_end        metadata_boundary
+continuous_byte_range  append-only          tombstone
+compaction             clip object          session artifact
+```
+
+Committed documentation 中請避免不一致拼法，例如 `pipline`、`CONTROBUTING` 或 `.pipline_end`。
+
+---
+
+## 11. Git 工作流程
+
+1. Fork repository。
+2. Clone 你的 fork。
+3. 若需要，設定 upstream remote：`git remote add upstream <repo-url>`。
+4. 從 `main` 建立 focused branch。
+5. 進行變更。
+6. 新增或更新測試。
+7. 行為改變時同步更新文件。
+8. 執行 local checks。
+9. Push branch。
+10. Open pull request。
+
+建議 branch names：
+
+```text
+feat/log-parse-aggregate
+fix/stream-merge-gap
+refactor/pipeline-dispatcher-cleanup
+docs/update-cli-contract
+test/clip-store-gc
+perf/log-parse-filter
+```
+
+PR 應保持 focused。如果一個 PR 同時改 applet behavior、storage format、benchmark scripts 與 documentation，除非這些變更高度相關，否則會很難 review。
+
+---
+
+## 12. Commit 訊息格式
+
+使用以下格式：
+
+```text
+[type]: short description
+```
+
+常見 types：
+
+| Type | 用途 |
+| --- | --- |
+| `init` | 專案初始化 |
+| `feat` | 新功能 |
+| `fix` | Bug fix |
+| `docs` | 純文件變更 |
+| `test` | 新增或修正測試 |
+| `refactor` | 不改行為的程式重構 |
+| `style` | 純格式調整 |
+| `chore` | Build、tooling、dependency、maintenance |
+| `perf` | 效能改善 |
+
+範例：
+
+```text
+[feat]: add ttl option to clip_store
+[fix]: handle sidecar eof in stream_merge
+[docs]: update dispatcher lifecycle contract
+[test]: add malformed jsonl filter case
+[perf]: reduce log_parse json filter allocations
+```
+
+建議：
+
+- 使用命令式語氣：`add`，不要寫 `added`。
+- 第一行保持簡短（72 characters 以內）。
+- 需要設計背景時，加入 commit body。
+- 有相關 issue 時請引用。
+
+---
+
+## 13. Pull Request 要求
+
+PR description 應包含：
+
+- 改了什麼，以及為什麼需要這個變更
+- 如何測試
+- 是否有 compatibility impact
+- 若與效能相關，是否有 benchmark impact
+- 相關 issue number（如果有的話）
+
+Reviewer 會看：
+
+- Correctness 與責任邊界
+- Stream discipline（`stdout`/`stderr` 分離）
+- Error handling 與有意義的 exit codes
+- Memory ownership 與 leak safety
+- 新行為的測試覆蓋
+- 文件更新
+- C11/POSIX 相容性
+
+Code review 不是批評。目標是讓專案可靠、容易理解，也容易展示。
+
+---
+
+## 14. Issue 回報與故障排除
+
+回報 bug 時，請提供：
+
+- Operating system 與 shell
+- Compiler version：`cc --version` 或 `gcc --version`
+- 實際執行的 command
+- Sample input files 或 minimal JSON Lines input
+- Expected output 與 actual output
+- 完整 `stderr` 訊息
+- 問題是否出現在 `make test`、`make smoke` 或 demo script
+
+好的 issue title 格式：
+
+```text
+[BUG] stream_merge emits duplicate clip after sequence gap
+[BUG] log_parse --filter drops valid nested field record
+[BUG] clip_store gc rewrites ttl-expired record
+```
+
+常見 troubleshooting commands：
 
 ```bash
-# 根據審查反饋進行更改
-nano applets/stream_merge.c
+# 更新 submodules
+git submodule update --init --recursive
 
-# 測試您的修改
+# 從乾淨狀態重編
+make clean && make
+
+# 跑測試
 make test && make smoke
-valgrind --leak-check=full ./build/stream_merge ...
 
-# 提交並推送
-git add applets/stream_merge.c
-git commit -m "[fix]: address review feedback on error handling"
-git push origin feat/my-new-feature
+# 查看 applet help
+./.build/log_parse --help
+./.build/clip_store --help
+./.build/stream_merge --help
 ```
 
-### 第 9 步：合併與清理
-
-一旦批准且所有測試通過：
-
-1. Maintainer 會將您的 PR 合併到 `main`
-2. 刪除遠端分支：
-   ```bash
-   git push origin --delete feat/my-new-feature
-   ```
-3. 刪除本地分支：
-   ```bash
-   git branch -d feat/my-new-feature
-   ```
-4. 更新您的本地 main：
-   ```bash
-   git fetch upstream
-   git checkout main
-   git merge upstream/main
-   ```
-
-### 與 Upstream 同步（保持 Fork 最新）
-
-如果您的 PR 需要時間或想保持與主倉庫同步：
+PR 有 conflict 時：
 
 ```bash
-# 從 upstream 獲取最新更新
-git fetch upstream
-
-# 將您的分支重新基於最新的 upstream/main
-git rebase upstream/main feat/my-new-feature
-
-# 強制推送您更新的分支（僅推到您自己的 fork！）
-git push origin --force-with-lease feat/my-new-feature
-```
-
----
-
-## 性能考量
-
-- **流資料處理**：Applet 應以恆定內存處理流資料（不緩衝整個輸入）
-- **文件 I/O**：文件操作應使用帶緩衝的 I/O；避免逐位元組讀寫
-- **大文件**：對大型 `.bin` 檔案使用 `mmap()` 或順序 I/O，盡可能避免隨機存取
-- **性能分析**：如添加新的關鍵路徑，使用 `perf record` 進行性能分析：
-  ```bash
-  perf record -g ./build/stream_merge ...
-  perf report
-  ```
-
----
-
-## 故障排除
-
-### 我的 PR 有衝突
-```bash
-# 獲取並在最新版本上重新基於
 git fetch upstream
 git rebase upstream/main
-# 在您的編輯器中解決衝突（搜尋 <<< === >>>）
+# resolve conflicts
 git add .
 git rebase --continue
-git push origin --force-with-lease feat/my-new-feature
-```
-
-### 我需要撤銷我的上一次提交
-```bash
-git reset --soft HEAD~1  # 撤銷提交，保留更改（可重新提交）
-git reset --hard HEAD~1  # 撤銷提交並丟棄更改（謹慎使用）
-```
-
-### 我想將 fork 更新到最新版本
-```bash
-git fetch upstream
-git checkout main
-git merge upstream/main
-git push origin main
-```
-
-### 我不小心提交到了 main，而不是功能分支
-```bash
-# 取消提交，保留更改
-git reset HEAD~1
-
-# 建立新分支，提交會跟著您
-git checkout -b fix/my-fix
-
-# 回到 main，與 upstream 同步
-git checkout main
-git reset --hard upstream/main
+git push origin --force-with-lease <branch-name>
 ```
 
 ---
 
-## 代碼審查期望
+## 15. 相容性與目前限制
 
-當您的代碼被審查時，我們會關注以下方面：
+Compatibility rules：
 
-- **正確性**：它是否按預期工作？是否有邏輯錯誤？
-- **風格**：它是否遵循我們的代碼風格規範？
-- **測試**：測試是否充分？是否涵蓋邊界情況？
-- **文件**：代碼是否有適當的註解？是否更新了 README 或 .docs/?
-- **性能**：可以更高效嗎？是否引入了不必要的內存消耗？
-- **UNIX 哲學**：是否遵循 UNIX 原則？是否保持了流資料紀律？
+- 核心實作維持 C11 與 POSIX APIs。
+- 不要要求 Linux-only features，除非有 guard 或明確文件說明。
+- Shell tests 維持 POSIX `sh`，除非明確需要 Bash。
+- 專案宣稱 GNU/Toybox-style CLI compatibility 的地方要維持相容。
+- 避免 heavyweight runtime dependencies。
+- Streaming workloads 的 memory usage 應保持 bounded。
 
-**審查不是批評** - 我們的目標是幫助您寫出更好的代碼，並確保項目的質量。
+目前限制：
 
----
+- 本專案主要是 metadata 與 clip-index pipeline。
+- `stream_merge` 不做 codec-aware video cutting。
+- `clips.db` 儲存 clip records，不儲存完整 media payloads。
+- Media extraction/remuxing 屬於 demo scripts 或未來 media extraction 工作。
+- 嚴重損壞 session 的 advanced recovery 屬於未來工作，除非已明確實作並測試。
+- Persistent on-disk secondary indexes 可能是未來工作；若改變目前行為，請寫入文件。
 
-## 文件與文檔
-
-### 代碼註解
-
-- 註解*為什麼*，不是*是什麼*
-- 解釋非顯而易見的設計決策
-- 註解應簡潔但有意義
-- 例：
-  ```c
-  // 連續性檢查：如果序列號跳躍 > 1，則發出部分 clip。
-  // （邊界設備可能丟棄封包；我們不重建，我們重新開始。）
-  if (expected_seq != actual_seq) {
-      emit_partial_clip();
-  }
-  ```
-
-### README 與文件
-
-- 保持 `README.md` 高層次和面向用戶
-- 設計決策放在 `.docs/`
-- 合約規範（例：JSON 模式、CLI 參數）放在 `.docs/core/contract.md`
-- 各 applet 實作細節放在 `.docs/applets/`
-- 添加需求時更新合規矩陣（`.docs/core/compliance.md`）
+如果不可避免要新增 dependency 或 platform-specific feature，請說明原因，並同步更新 build files、docs、tests 與 benchmarks。
 
 ---
 
-## 報告問題
+## 16. 提交前檢查清單
 
-報告錯誤時，請提供：
+提交 PR 前，請確認：
 
-- **複現步驟**：如何重現問題（越詳細越好）
-- **預期行為**：應該發生什麼
-- **實際行為**：實際發生了什麼
-- **輸入數據**：導致問題的最小範例輸入
-- **錯誤訊息**：完整的 stderr 輸出
-- **環境**：
-  - 作業系統（Linux 版本、macOS 版本等）
-  - 編譯器版本（`gcc --version`）
-  - 構建標誌（您用什麼 CFLAGS 編譯的）
-
-**範例 Issue 標題：**
-```
-[BUG] stream_merge crashes on empty metadata file
-[BUG] log_parse --filter type=data skips valid records
-```
+- [ ] 已執行 `git submodule update --init --recursive`。
+- [ ] `make clean && make` 通過。
+- [ ] `make test` 通過。
+- [ ] `make smoke` 通過。
+- [ ] 沒有 diagnostic text 被印到 `stdout`。
+- [ ] 新行為有測試。
+- [ ] Memory-sensitive changes 已用 `valgrind` 或等價工具檢查。
+- [ ] Session artifact names 保持相容（`.pipeline_end`，不是 `.pipline_end`）。
+- [ ] CLI changes 已更新 `README.md`、`man/*.1`、`.docs/`。
+- [ ] Benchmark claims 有標示 comparison type A、B 或 C。
+- [ ] Commit messages 符合 `[type]: description`。
+- [ ] PR 說明有寫清楚改了什麼以及如何測試。
 
 ---
 
-## 有問題？
+## 17. 問題與資安回報
 
-- **設計問題？** 開立標籤為 `question` 的 issue，詳細說明您的想法
-- **卡住了？** 在 PR 或 issue 評論中提問。我們很樂意幫助！
-- **安全問題？** 🔒 私下電郵維護者，不要開立公開 issue
-- **一般反饋？** 在 GitHub Discussions 中開啟討論
+設計問題請開 issue，並附上足夠 context 與小型範例。
 
----
-
-## 開發者檢查清單
-
-在提交 PR 前，請確認：
-
-- [ ] 代碼遵循風格指南（使用 `clang-format`）
-- [ ] 所有測試通過：`make test && make smoke`
-- [ ] 無內存洩漏：`valgrind --leak-check=full`
-- [ ] 維護 stdout/stderr 紀律（無日誌在 stdout）
-- [ ] 文件已更新（README、.docs/、代碼註解）
-- [ ] 提交訊息遵循 `[action]: [description]` 格式
-- [ ] PR 填寫了完整的模板
-- [ ] 引用了相關 issues（如果有）
+資安相關的問題**請勿開 public issue**，請透過 email 或 GitHub Private Security Advisory 私下聯絡 maintainers。
 
 ---
 
-## 致謝
+感謝你協助改進 `stream-data-pipeline`。
 
-感謝您對 `stream-data-pipeline` 的貢獻！無論是代碼、文件還是錯誤報告，您的幫助都讓這個專案更好。
-
-**所有貢獻者都將在項目的 CONTRIBUTORS.md 中被認可。**
-
----
-
-*最後更新：2026 年*
+_最後更新：2026-06_
